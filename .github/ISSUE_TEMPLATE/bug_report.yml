@@ -1,5 +1,5 @@
-name: Bug report / 오류 신고
-description: Something went wrong while setting up cuts. / 컷 세팅 중 문제가 생겼어요.
+name: Bug report
+description: Something went wrong while setting up cuts.
 labels: ["bug"]
 body:
   - type: markdown
@@ -7,27 +7,24 @@ body:
       value: |
         **This page is public. Do not attach production work:** no timesheet scans, cel or LO images, or AEP files from real works.
         If a picture helps, use the DEMO work or a redrawn example.
-
-        **이 페이지는 공개돼요. 작업물은 올리지 마세요.** 실제 작품의 타임시트·셀·LO 이미지나 AEP는 첨부하지 마세요.
-        그림이 필요하면 DEMO 작품이나 새로 그린 예시를 써 주세요.
   - type: textarea
     id: what
     attributes:
-      label: What happened? / 무슨 일이 있었나요?
-      description: What you did, what you expected, and what happened instead. / 무엇을 했고, 무엇을 기대했고, 실제로 어떻게 됐는지 적어 주세요.
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
     validations:
       required: true
   - type: input
     id: after-effects
     attributes:
-      label: After Effects version / AE 버전
+      label: After Effects version
       placeholder: After Effects 2025 (25.x)
     validations:
       required: true
   - type: dropdown
     id: agent
     attributes:
-      label: AI agent / 사용한 AI
+      label: AI agent
       options:
         - Codex
         - Claude Code
@@ -36,34 +33,33 @@ body:
   - type: input
     id: model
     attributes:
-      label: Model and reasoning / 모델과 추론
+      label: Model and reasoning
       placeholder: GPT-6.2-Sol, xhigh
   - type: dropdown
     id: language
     attributes:
-      label: Window language / 창 언어
+      label: Window language
       options:
         - English
-        - 한국어
-        - 日本語
-        - 简体中文
+        - Korean
+        - Japanese
+        - Simplified Chinese
   - type: textarea
     id: notes
     attributes:
-      label: Note files and error messages / 메모 파일과 오류 메시지
+      label: Note files and error messages
       description: |
         Paste the text of the note files in the cut folder (Needs review, Mapping failed, Analysis failed, Apply failed, in any language) and any error the window showed. Remove names or paths you'd rather keep private.
-        컷 폴더의 메모 파일(작업자 확인 필요, 매핑·분석·적용 실패 등) 내용과 창에 나온 오류를 붙여 넣어 주세요. 공개하고 싶지 않은 이름·경로는 지워 주세요.
       render: text
   - type: input
     id: version
     attributes:
-      label: AE AutoSet version / 버전
-      description: The commit you cloned, or the date you downloaded it. / 받은 커밋 또는 내려받은 날짜
+      label: AE AutoSet version
+      description: The commit you cloned, or the date you downloaded it.
   - type: checkboxes
     id: confidential
     attributes:
-      label: Confidentiality / 비공개 확인
+      label: Confidentiality
       options:
-        - label: I did not attach production work (timesheets, cels, LO, AEP). / 작품 자료(시트·셀·LO·AEP)를 첨부하지 않았어요.
+        - label: I did not attach production work (timesheets, cels, LO, AEP).
           required: true

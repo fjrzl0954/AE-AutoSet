@@ -119,7 +119,7 @@ LO, 카메라를 적용해 컷마다 AEP로 저장해요.
 
 ### 피드백
 오류, 질문, 아이디어는 [Issues](https://github.com/fjrzl0954/AE-AutoSet/issues/new/choose)에 남겨 주세요.
-"오류 신고" 또는 "기능 요청"을 고르고, 메모 파일 내용과 창에 나온 오류를 붙여 넣어 주세요.
+*Bug report* 또는 *Feature request*를 고르고, 메모 파일 내용과 창에 나온 오류를 붙여 넣어 주세요.
 **공개 페이지라서 실제 작품의 시트·셀·LO·AEP는 올리지 마세요.** 그림이 필요하면 DEMO 작품을 써 주세요.
 
 라이선스: [MIT](LICENSE)

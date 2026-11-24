@@ -1,20 +1,20 @@
-name: Feature request / 기능 요청
-description: Suggest an idea or an improvement. / 아이디어나 개선점을 알려 주세요.
+name: Feature request
+description: Suggest an idea or an improvement.
 labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
       value: |
-        This page is public. Please don't attach production work. / 이 페이지는 공개돼요. 작업물은 올리지 마세요.
+        This page is public. Please don't attach production work.
   - type: textarea
     id: want
     attributes:
-      label: What would you like? / 원하는 것
-      description: What should AE AutoSet do, and in which situation? / 어떤 상황에서 무엇을 해 주면 좋을지 적어 주세요.
+      label: What would you like?
+      description: What should AE AutoSet do, and in which situation?
     validations:
       required: true
   - type: textarea
     id: now
     attributes:
-      label: How do you do it now? / 지금은 어떻게 하고 있나요?
-      description: Your current workaround, if any. / 지금 쓰는 방법이 있다면 적어 주세요.
+      label: How do you do it now?
+      description: Your current workaround, if any.
