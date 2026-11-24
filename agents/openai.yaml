@@ -1,0 +1,6 @@
+interface:
+  display_name: "AE AutoSet"
+  short_description: "AE 타임시트 판독·매핑·카메라 적용 및 저장"
+  default_prompt: "Use $ae-autoset to process the supplied After Effects scene path immediately."
+policy:
+  allow_implicit_invocation: true

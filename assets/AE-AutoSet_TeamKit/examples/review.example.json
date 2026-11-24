@@ -1,0 +1,33 @@
+{
+  "cut_number": "124",
+  "cut_confidence": 1.0,
+  "second": "3+5",
+  "second_confidence": 1.0,
+  "sheet_number": 1,
+  "sheet_raw": "1",
+  "sheet_confidence": 1.0,
+  "tracks": [
+    {
+      "caption": "A",
+      "events": [
+        {"sheet_frame": 1, "type": "cell", "cell_number": 1},
+        {"sheet_frame": 4, "type": "cell", "cell_number": 2},
+        {"sheet_frame": 13, "type": "empty", "cell_number": null},
+        {"sheet_frame": 25, "type": "cell", "cell_number": 3}
+      ]
+    },
+    {
+      "caption": "B",
+      "events": [
+        {"sheet_frame": 1, "type": "cell", "cell_number": 1},
+        {"sheet_frame": 7, "type": "cell", "cell_number": 2}
+      ]
+    }
+  ],
+  "uncertain_items": [],
+  "audit_entry": {
+    "kind": "human_visual_review",
+    "reviewer": "Codex",
+    "note": "Example only. Replace every value after checking the current sheet. Tracks without source folders were excluded."
+  }
+}

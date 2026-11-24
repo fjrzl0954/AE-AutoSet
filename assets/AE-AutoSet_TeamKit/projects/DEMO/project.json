@@ -1,0 +1,40 @@
+{
+  "id": "DEMO",
+  "name": "Demo",
+  "scene_pattern": "DEMO_SC{cut3}",
+  "output": {
+    "aep": "{scene}.tk1.aep",
+    "ardj": "{scene}.ardj",
+    "main_comp": "{scene}.tk1"
+  },
+  "comps": {
+    "main": "DEMO_SC000.tk1",
+    "cell": "01_Comp stage",
+    "lo": "01_Comp stage"
+  },
+  "camera": {
+    "layer": "camera",
+    "comp": "01_Comp stage",
+    "output_comp": "02_camera"
+  },
+  "project_folders": {
+    "lo": "01_LO",
+    "cell_footage": "02_CELL",
+    "cell_comp": "20_CELL COMP"
+  },
+  "cell_anchor_layers": [],
+  "scene_folders": {
+    "sheet": [
+      "*sheet*"
+    ],
+    "lo": [
+      "LO"
+    ]
+  },
+  "fps": 24,
+  "modules": {
+    "character_fx": false
+  },
+  "pack_version": 2,
+  "template": "DEMO_SC000.tk1.aep"
+}

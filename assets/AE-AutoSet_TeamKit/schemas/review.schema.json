@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AE Timesheet Codex Review",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "second",
+    "tracks",
+    "uncertain_items"
+  ],
+  "properties": {
+    "cut_number": {"type": "string", "pattern": "^[0-9]*$", "description": "Effective CUT. Optional or blank when the batch supplies scene-folder context; the folder CUT takes precedence."},
+    "cut_raw": {"type": ["string", "null"], "description": "Observed CUT exactly as written, separate from the effective folder CUT."},
+    "cut_confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "second": {"type": "string", "pattern": "^[0-9]+\\+[0-9]+$", "description": "Reviewed page duration, independent of camera movement timing. Preserve written text in audit_entry.second_raw and scene/page/camera timing evidence in audit_entry.timing_review."},
+    "second_confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "sheet_number": {"type": "integer", "minimum": 1},
+    "sheet_count": {"type": "integer", "minimum": 1},
+    "sheet_raw": {"type": ["string", "null"], "description": "Observed SHEET text, including fractions, blank string or null. A blank header uses actual image count and processing order."},
+    "sheet_confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "header_source": {"type": "object", "additionalProperties": true, "description": "Provenance for normalized headers, for example cut=scene_folder and sheet=selection_order."},
+    "tracks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["caption", "events"],
+        "properties": {
+          "caption": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]*$"},
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true,
+              "required": ["sheet_frame", "type", "cell_number"],
+              "properties": {
+                "sheet_frame": {"type": "integer", "minimum": 1},
+                "type": {"enum": ["cell", "empty"]},
+                "cell_number": {"type": ["integer", "null"], "minimum": 1}
+              }
+            }
+          }
+        }
+      }
+    },
+    "uncertain_items": {"type": "array", "items": {"$ref": "#/$defs/uncertainItem"}},
+    "review_warnings": {"type": "array", "items": {"$ref": "#/$defs/reviewWarning"}},
+    "audit_entry": {"type": "object"}
+  },
+  "$defs": {
+    "uncertainItem": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Unresolved items remain blocking. apply_with_warning requires image and adjacent-frame evidence plus a matching actual track event; the runtime verifies that match.",
+      "properties": {
+        "resolution": {"type": "string"},
+        "track": {"type": "string", "minLength": 1},
+        "sheet_frame": {"type": "integer", "minimum": 1},
+        "cell_number": {"type": "integer", "minimum": 1},
+        "candidates": {"type": "array", "items": {"type": "integer", "minimum": 1}, "minItems": 1, "uniqueItems": true},
+        "reason": {"type": "string", "minLength": 1}
+      },
+      "if": {"required": ["resolution"], "properties": {"resolution": {"const": "apply_with_warning"}}},
+      "then": {"required": ["track", "sheet_frame", "cell_number", "candidates", "reason"]}
+    },
+    "reviewWarning": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["kind", "message"],
+      "properties": {
+        "kind": {"type": "string", "minLength": 1},
+        "message": {"type": "string", "minLength": 1},
+        "track": {"type": "string", "minLength": 1},
+        "sheet_frame": {"type": "integer", "minimum": 1},
+        "page_sheet_frame": {"type": "integer", "minimum": 1},
+        "sheet_number": {"type": "integer", "minimum": 1},
+        "cell_number": {"type": "integer", "minimum": 1},
+        "candidates": {"type": "array", "items": {"type": "integer", "minimum": 1}, "minItems": 1, "uniqueItems": true},
+        "reason": {"type": "string", "minLength": 1},
+        "source_folder": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

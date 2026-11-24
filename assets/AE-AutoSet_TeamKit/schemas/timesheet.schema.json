@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.ae-timesheet-auto/schemas/timesheet.schema.json",
+  "title": "AE Timesheet Auto recognition result",
+  "type": "object",
+  "required": ["schema_version", "source_image", "cut_number", "cut_confidence", "sheet_number", "sheet_fps", "duration", "tracks", "uncertain_items"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "source_image": {"type": "string", "minLength": 1},
+    "cut_number": {"type": "string", "minLength": 1},
+    "cut_raw": {"type": ["string", "null"], "description": "Observed CUT retained separately from the effective folder CUT."},
+    "cut_confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "sheet_number": {"type": "integer", "minimum": 1},
+    "sheet_count": {"type": ["integer", "null"], "minimum": 1, "description": "Actual input image count, or null when filesystem context is unavailable."},
+    "sheet_raw": {"type": ["string", "null"], "description": "Observed SHEET text; blank or null is preserved when count and order supply the effective page number."},
+    "header_source": {"type": "object", "additionalProperties": true},
+    "sheet_fps": {"type": "integer", "minimum": 1},
+    "duration": {
+      "type": "object",
+      "required": ["seconds", "plus_frames", "total_frames"],
+      "properties": {
+        "raw": {"type": "string"},
+        "seconds": {"type": "integer", "minimum": 0},
+        "plus_frames": {"type": "integer", "minimum": 0},
+        "total_frames": {"type": "integer", "minimum": 1}
+      }
+    },
+    "tracks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["caption", "events"],
+        "properties": {
+          "caption": {"type": "string", "pattern": "^[A-F]$"},
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["sheet_frame", "type", "cell_number", "confidence", "bbox"],
+              "properties": {
+                "sheet_frame": {"type": "integer", "minimum": 1},
+                "type": {"enum": ["cell", "empty"]},
+                "cell_number": {"type": ["integer", "null"], "minimum": 1},
+                "raw_text": {"type": "string"},
+                "circled": {"type": "boolean"},
+                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                "bbox": {"type": "array", "items": {"type": "integer"}, "minItems": 4, "maxItems": 4},
+                "user_modified": {"type": "boolean"}
+              }
+            }
+          }
+        }
+      }
+    },
+    "uncertain_items": {"type": "array", "items": {"$ref": "#/$defs/uncertainItem"}},
+    "review_warnings": {"type": "array", "items": {"$ref": "#/$defs/reviewWarning"}}
+  },
+  "$defs": {
+    "uncertainItem": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Unresolved items remain blocking. An approved apply_with_warning digit resolution must match the actual track event; the runtime verifies that match.",
+      "properties": {
+        "resolution": {"type": "string"},
+        "track": {"type": "string", "minLength": 1},
+        "sheet_frame": {"type": "integer", "minimum": 1},
+        "cell_number": {"type": "integer", "minimum": 1},
+        "candidates": {"type": "array", "items": {"type": "integer", "minimum": 1}, "minItems": 1, "uniqueItems": true},
+        "reason": {"type": "string", "minLength": 1}
+      },
+      "if": {"required": ["resolution"], "properties": {"resolution": {"const": "apply_with_warning"}}},
+      "then": {"required": ["track", "sheet_frame", "cell_number", "candidates", "reason"]}
+    },
+    "reviewWarning": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["kind", "message"],
+      "properties": {
+        "kind": {"type": "string", "minLength": 1},
+        "message": {"type": "string", "minLength": 1},
+        "track": {"type": "string", "minLength": 1},
+        "sheet_frame": {"type": "integer", "minimum": 1},
+        "page_sheet_frame": {"type": "integer", "minimum": 1},
+        "sheet_number": {"type": "integer", "minimum": 1},
+        "cell_number": {"type": "integer", "minimum": 1},
+        "candidates": {"type": "array", "items": {"type": "integer", "minimum": 1}, "minItems": 1, "uniqueItems": true},
+        "reason": {"type": "string", "minLength": 1},
+        "source_folder": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

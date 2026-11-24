@@ -1,0 +1,231 @@
+AE AutoSet — READ ME
+한국어 · 日本語 · English · 简体中文
+
+언어별 안내가 이 파일 안에 차례로 들어 있습니다. 원하는 언어 제목까지 내려 보세요.
+各言語の案内がこのファイルに順番に入っています。読みたい言語の見出しまでスクロールしてください。
+This file holds the guide in each language, one after another. Scroll down to your language.
+本文件依次包含各语言的说明。请向下滚动到所需语言的标题。
+
+
+====================  한국어  ====================
+
+AE AutoSet 사용 안내
+
+필요 환경: Windows 10/11 · Codex 또는 Claude Code · After Effects 2025 이상
+API 키는 필요 없습니다.
+
+1. 설치
+ZIP을 %USERPROFILE%\.agents\skills에 풉니다. (Claude Code는 %USERPROFILE%\.claude\skills에도 같은 폴더를 둡니다.)
+최종 위치: ...\skills\AE-AutoSet\SKILL.md
+AE-AutoSet 폴더가 이중으로 생기지 않게 확인하고 Codex·Claude를 다시 시작합니다.
+
+2. 설정 창 열기
+처음 한 번만 AE-AutoSet 폴더의 "AE AutoSet.cmd"를 두 번 누릅니다.
+바탕화면과 시작 메뉴에 파란 AE 아이콘의 "AE AutoSet" 바로가기가 생기고, 다음부터는 그 아이콘으로 엽니다.
+바로가기를 지웠거나 스킬 폴더를 옮겼다면 "AE AutoSet.cmd"를 다시 한 번 실행하면 됩니다.
+왼쪽 위에 After Effects 연결 상태가 보입니다. 못 찾으면 그 표시를 눌러 AfterFX.exe를 고릅니다.
+왼쪽 아래 "언어 · Language"에서 창 언어를 고릅니다(English·한국어·日本語·简体中文). 결과 메모도 같은 언어로 적힙니다.
+
+3. 작품 등록 — 작품마다 처음 한 번
+왼쪽 작품 목록 아래 "+ 새 작품"을 누릅니다.
+ ① 기초 AEP: 000컷 양식 AEP와, 가능하면 실제 컷 폴더 하나를 고릅니다.
+ ② 컴프 확인: AEP를 읽어 셀·LO를 넣을 컴프, 셀 놓을 위치, 카메라, 폴더를 미리 골라 둡니다. 맞는지 확인만 합니다.
+ ③ 이름 규칙: 컷 폴더 이름 규칙과 저장 이름을 확인합니다. 예시 컷이 몇 화 몇 컷으로 인식되는지 바로 보입니다.
+저장하면 왼쪽 작품 목록에 추가됩니다.
+
+4. 작업 요청
+ ① 왼쪽 목록에서 작품을 고릅니다. (컷 폴더를 넣으면 대부분 자동으로 골라집니다.)
+ ② 컷 폴더 또는 여러 컷이 든 상위 폴더를 창에 끌어다 놓습니다.
+ ③ 작업할 컷만 체크하고, 왼쪽 위에서 Codex 또는 Claude를 고른 뒤 "작업 시작"을 누릅니다.
+    진행 상황이 창 아래에 실시간으로 보이고, 끝나면 결과 요약이 나옵니다. "중지"로 멈출 수 있습니다.
+    기본 모델: Claude는 최신 Fable(혼잡하면 최신 Opus), Codex는 모델 목록 1순위(현재 GPT-6.2-Sol), 둘 다 추론 xhigh.
+    크레딧 사정에 따라 왼쪽 아래 "모델"·"추론" 칸에서 바꿀 수 있고, Codex·Claude별로 PC에 따로 기억됩니다.
+    낮은 모델이나 낮은 추론은 크레딧을 아끼지만 시트 판독이 틀릴 수 있어요. "(권장)" 항목을 고르면 원래대로 돌아갑니다.
+ ④ 작업 시작을 쓰려면 PC마다 한 번 Claude Code 또는 Codex 프로그램(CLI)을 설치하고 로그인해야 합니다.
+    처음 열면 컷 폴더 위에 "준비" 칸이 나옵니다. [설치]를 누르면 자동으로 설치되고(관리자 권한 불필요),
+    [로그인]을 누르면 브라우저가 열립니다. 본인 Claude 또는 ChatGPT 계정으로 로그인하면 준비 칸이 사라집니다.
+    작업 중에는 진행 창 제목에 걸린 시간이 표시됩니다.
+    CLI 없이 하려면 "요청 복사"를 눌러 Codex·Claude 채팅창에 붙여넣으면 됩니다.
+이미 결과 AEP가 있는 컷, 시트가 없는 컷, 여러 컷이 한 폴더에 있는 컷은 자동으로 빠집니다.
+기존 결과를 다시 만들려면 컷 목록 아래 "재작업 포함"을 켜고 그 컷을 체크합니다. ("요청 복사"에는 요청 문장 뒤에 "기존 결과 재작업"이 자동으로 붙습니다.)
+
+5. 입력 준비
+컷 폴더 안에 셀 폴더(A, B 또는 a, b), 시트 폴더, LO 폴더를 둡니다. 폴더 이름은 작품 설정을 따릅니다.
+시트 폴더에 동화 전표처럼 타임시트가 아닌 이미지가 있어도 AI가 판독 후 제외합니다.
+작업 시작을 누르면 작업용 After Effects 창이 하나 더 열렸다가, 끝나면 스스로 닫힙니다.
+지금 쓰고 있는 AE는 그대로 두고 계속 작업해도 됩니다(저장 안 한 작업도 건드리지 않습니다).
+실행 중에는 대상 컷의 AE 프로젝트만 동시에 열거나 편집하지 마세요.
+
+6. 완료·업데이트
+AEP·ARDJ와 확인/실패 메모를 확인하고 최종 검수는 작업자가 진행합니다. 카메라 보류는 완료가 아닙니다.
+작업이 끝나면 저장에 성공한 컷의 작업 파일(_timesheet_auto, LO 변환본)과 상위 폴더의 _sessions·결과 요약 파일은 자동으로 지워집니다.
+AEP가 사용하는 파일은 남고, 실패한 컷은 원인 확인을 위해 작업 파일을 그대로 둡니다.
+업데이트해도 직접 등록한 작품(assets\AE-AutoSet_TeamKit\projects)은 남습니다. 업데이트 전 작업을 마치고 설치 폴더를 백업하세요.
+
+
+====================  日本語  ====================
+
+AE AutoSet 使い方
+
+必要な環境: Windows 10/11 · Codex または Claude Code · After Effects 2025 以降
+APIキーは必要ありません。
+
+1. インストール
+ZIPを %USERPROFILE%\.agents\skills に展開します。(Claude Code では %USERPROFILE%\.claude\skills にも同じフォルダーを置きます。)
+最終的な場所: ...\skills\AE-AutoSet\SKILL.md
+AE-AutoSet フォルダーが二重にできていないか確認し、Codex・Claude を再起動します。
+
+2. 設定ウィンドウを開く
+最初の一回だけ、AE-AutoSet フォルダーの "AE AutoSet.cmd" をダブルクリックします。
+デスクトップとスタートメニューに青いAEアイコンの "AE AutoSet" ショートカットができ、次回からはそのアイコンで開きます。
+ショートカットを削除したり、スキルフォルダーを移動したりした場合は、"AE AutoSet.cmd" をもう一度実行してください。
+左上に After Effects の接続状態が表示されます。見つからない場合は、その表示をクリックして AfterFX.exe を選びます。
+左下の「言語 · Language」でウィンドウの言語を選べます (English・한국어・日本語・简体中文)。結果メモも同じ言語で書かれます。
+
+3. 作品の登録 — 作品ごとに最初の一回
+左の作品リストの下にある「+ 新しい作品」をクリックします。
+ ① 原本AEP: 原本AEP (000カットの空テンプレート) と、できれば実際のカットフォルダーを一つ選びます。
+ ② コンポ確認: AEPを読み取り、セル・LOを入れるコンポ、セルを置く位置、カメラ、フォルダーをあらかじめ選んでおきます。合っているか確認するだけです。
+ ③ 名前の規則: カットフォルダーの名前の規則と保存名を確認します。例のカットが何話何カットとして認識されるかがすぐに表示されます。
+保存すると左の作品リストに追加されます。
+
+4. 作業の依頼
+ ① 左のリストから作品を選びます。(カットフォルダーを入れると、ほとんどの場合自動で選ばれます。)
+ ② カットフォルダー、または複数のカットが入った上位フォルダーをウィンドウにドラッグ&ドロップします。
+ ③ 作業するカットだけにチェックを入れ、左上で Codex または Claude を選んでから「作業開始」をクリックします。
+    進行状況がウィンドウ下部にリアルタイムで表示され、終わると結果の概要が出ます。「中止」で止められます。
+    既定のモデル: Claude は最新の Fable (混雑時は最新の Opus)、Codex はモデル一覧の1番目 (現在は GPT-6.2-Sol)、どちらも推論は xhigh です。
+    クレジットの状況に応じて左下の「モデル」・「推論」欄で変更でき、Codex・Claude ごとにPCに別々に記憶されます。
+    低いモデルや低い推論はクレジットを節約できますが、タイムシートの読み取りを誤ることがあります。「(推奨)」の項目を選ぶと元に戻ります。
+ ④ 「作業開始」を使うには、PCごとに一度 Claude Code または Codex のプログラム(CLI)をインストールしてログインする必要があります。
+    最初に開くとカットフォルダーの上に「準備」欄が表示されます。[インストール]をクリックすると自動でインストールされ(管理者権限は不要)、
+    [ログイン]をクリックするとブラウザーが開きます。ご自身の Claude または ChatGPT アカウントでログインすると「準備」欄は消えます。
+    作業中は進行ウィンドウのタイトルに経過時間が表示されます。
+    CLIを使わない場合は「依頼をコピー」をクリックし、Codex・Claude のチャット欄に貼り付けてください。
+すでに結果AEPがあるカット、タイムシートがないカット、複数のカットが一つのフォルダーに入っているカットは自動で除外されます。
+既存の結果を作り直すには、カット一覧の下の「やり直しを含める」をオンにして、そのカットにチェックを入れます。(「依頼をコピー」では依頼文の後ろに「既存の結果をやり直し」が自動で付きます。)
+
+5. 入力の準備
+カットフォルダーの中にセルフォルダー (A, B または a, b)、タイムシートフォルダー、LOフォルダーを置きます。フォルダー名は作品の設定に従います。
+タイムシートフォルダーに動画伝票のようなタイムシート以外の画像があっても、AIが読み取った上で除外します。
+「作業開始」をクリックすると作業用の After Effects ウィンドウがもう一つ開き、終わると自動で閉じます。
+今使っている AE はそのままにして作業を続けてかまいません (保存していない作業にも触れません)。
+実行中は、対象カットの AE プロジェクトだけは同時に開いたり編集したりしないでください。
+
+6. 完了・アップデート
+AEP・ARDJ と確認/失敗メモを確認し、最終チェックは作業者が行います。カメラ保留は完了ではありません。
+作業が終わると、保存に成功したカットの作業ファイル (_timesheet_auto、LO変換版) と、上位フォルダーの _sessions・結果概要ファイルは自動で削除されます。
+AEPが使うファイルは残ります。失敗したカットは、原因を確認できるよう作業ファイルをそのまま残します。
+アップデートしても、自分で登録した作品 (assets\AE-AutoSet_TeamKit\projects) は残ります。アップデート前に作業を終え、インストールフォルダーをバックアップしてください。
+
+
+====================  English  ====================
+
+AE AutoSet guide
+
+Requirements: Windows 10/11 · Codex or Claude Code · After Effects 2025 or later
+No API key is needed.
+
+1. Install
+Unzip the ZIP into %USERPROFILE%\.agents\skills. (For Claude Code, also put the same folder in %USERPROFILE%\.claude\skills.)
+Final location: ...\skills\AE-AutoSet\SKILL.md
+Make sure the AE-AutoSet folder isn't nested twice, then restart Codex and Claude.
+
+2. Open the window
+The first time only, double-click "AE AutoSet.cmd" in the AE-AutoSet folder.
+An "AE AutoSet" shortcut with a blue AE icon appears on the desktop and in the Start menu. From then on, open the window with that icon.
+If you deleted the shortcut or moved the skill folder, just run "AE AutoSet.cmd" once more.
+The top left shows the After Effects connection status. If it can't find AE, click that indicator and pick AfterFX.exe.
+Choose the window language under "Language" at the bottom left (English, 한국어, 日本語, 简体中文). Result notes are written in the same language.
+
+3. Register a work — once per work
+Click "+ New work" under the work list on the left.
+ ① Master AEP: pick the master AEP (the empty cut-000 template) and, if possible, one real cut folder.
+ ② Comps: it reads the AEP and pre-selects the comps for cels and LO, where the cels go, the camera, and the folders. Just check that they're right.
+ ③ Naming: check the cut folder naming rule and the save name. You'll see right away which episode and cut the example is read as.
+Save, and the work is added to the list on the left.
+
+4. Make a request
+ ① Pick a work from the list on the left. (Dropping in a cut folder usually picks it for you.)
+ ② Drag a cut folder, or a parent folder holding several cuts, onto the window.
+ ③ Check only the cuts you want, choose Codex or Claude at the top left, then click "Start".
+    Progress shows live at the bottom of the window, and a summary appears when it's done. Click "Stop" to stop.
+    Default models: Claude uses the latest Fable (the latest Opus when busy), Codex uses the first model in its list (currently GPT-6.2-Sol); both use xhigh reasoning.
+    To suit your credits, change them in the "Model" and "Reasoning" boxes at the bottom left. Each PC remembers them separately for Codex and Claude.
+    A lower model or lower reasoning saves credits but may misread timesheets. Pick the "(recommended)" item to go back to the default.
+ ④ To use "Start", each PC needs the Claude Code or Codex program (CLI) installed and signed in once.
+    The first time you open the window, the "Setup" panel appears above the cut folders. Click [Install] to install it automatically (no admin rights needed),
+    and click [Sign in] to open your browser. Sign in with your own Claude or ChatGPT account and the "Setup" panel goes away.
+    While a job runs, the progress window title shows the elapsed time.
+    To work without the CLI, click "Copy request" and paste it into the Codex or Claude chat.
+Cuts that already have a result AEP, cuts without a timesheet, and cuts that share one folder with other cuts are skipped automatically.
+To rebuild existing results, turn on "Include redo" below the cut list and check those cuts. ("Copy request" then adds "redo existing results" to the request by itself.)
+
+5. Prepare the input
+Put the cel folders (A, B or a, b), the timesheet folder, and the LO folder inside the cut folder. Folder names follow the work's settings.
+If the timesheet folder also holds images that aren't timesheets, such as animation slips, the AI reads them and leaves them out.
+When you click "Start", a separate After Effects window opens for the job and closes by itself when it's done.
+You can keep working in the AE you already have open (unsaved work is left untouched).
+While it runs, don't open or edit the target cut's AE project at the same time.
+
+6. Finish and update
+Check the AEP, ARDJ, and the check/failure notes; the worker does the final review. Camera deferred does not mean done.
+When a job ends, the working files of cuts that saved successfully (_timesheet_auto, LO conversions) and the _sessions folder and summary files in the parent folder are deleted automatically.
+Files the AEP uses are kept. For failed cuts, the working files are left as they are so you can find the cause.
+Works you registered yourself (assets\AE-AutoSet_TeamKit\projects) stay after an update. Finish your jobs and back up the install folder before updating.
+
+
+====================  简体中文  ====================
+
+AE AutoSet 使用说明
+
+运行环境：Windows 10/11 · Codex 或 Claude Code · After Effects 2025 及以上
+无需 API 密钥。
+
+1. 安装
+将 ZIP 解压到 %USERPROFILE%\.agents\skills。（使用 Claude Code 时，还需在 %USERPROFILE%\.claude\skills 中放一份相同的文件夹。）
+最终位置：...\skills\AE-AutoSet\SKILL.md
+确认 AE-AutoSet 文件夹没有嵌套两层，然后重启 Codex、Claude。
+
+2. 打开设置窗口
+仅首次需要：双击 AE-AutoSet 文件夹中的 "AE AutoSet.cmd"。
+桌面和开始菜单会出现蓝色 AE 图标的 "AE AutoSet" 快捷方式，以后用该图标打开即可。
+如果删除了快捷方式或移动了技能文件夹，再运行一次 "AE AutoSet.cmd" 即可。
+左上角显示 After Effects 的连接状态。若未找到，点击该状态并选择 AfterFX.exe。
+可在左下角“语言 · Language”中选择窗口语言（English、한국어、日本語、简体中文）。结果备注也会使用同一语言。
+
+3. 注册作品 — 每个作品首次一次
+点击左侧作品列表下方的“+ 新建作品”。
+ ① 模板 AEP：选择模板 AEP（000镜头的空模板），如有可能，再选一个实际的镜头文件夹。
+ ② 合成确认：读取 AEP，预先选好放入动画层·LO 的合成、动画层的放置位置、摄像机和文件夹。只需确认是否正确。
+ ③ 命名规则：确认镜头文件夹的命名规则和保存名称。可立即看到示例镜头被识别为第几集第几个镜头。
+保存后即添加到左侧作品列表。
+
+4. 发起请求
+ ① 在左侧列表中选择作品。（放入镜头文件夹后，大多会自动选中。）
+ ② 将镜头文件夹，或包含多个镜头的上级文件夹拖放到窗口中。
+ ③ 只勾选要处理的镜头，在左上角选择 Codex 或 Claude，然后点击“开始处理”。
+    进度实时显示在窗口下方，完成后显示结果摘要。可点击“中止”停止。
+    默认模型：Claude 为最新 Fable（繁忙时为最新 Opus），Codex 为模型列表第一项（当前为 GPT-6.2-Sol），推理均为 xhigh。
+    可根据额度情况在左下角“模型”·“推理”栏中更改，Codex、Claude 分别保存在本机。
+    较低的模型或推理可节省额度，但可能误读摄影表。选择“(推荐)”项即可恢复默认。
+ ④ 要使用“开始处理”，每台电脑需安装一次 Claude Code 或 Codex 程序（CLI）并登录。
+    首次打开时，镜头文件夹上方会出现“准备”栏。点击[安装]即可自动安装（无需管理员权限），
+    点击[登录]会打开浏览器。用自己的 Claude 或 ChatGPT 账号登录后，“准备”栏即消失。
+    处理过程中，进度窗口标题会显示已用时间。
+    不使用 CLI 时，点击“复制请求”，粘贴到 Codex、Claude 的聊天框即可。
+已有结果 AEP 的镜头、没有摄影表的镜头、多个镜头共用一个文件夹的镜头会被自动跳过。
+如需重新生成已有结果，请打开镜头列表下方的“包含重做”并勾选这些镜头。（使用“复制请求”时，请求语句末尾会自动加上“重做已有结果”。）
+
+5. 准备输入
+在镜头文件夹中放入动画层文件夹（A、B 或 a、b）、摄影表文件夹和 LO 文件夹。文件夹名称以作品设置为准。
+即使摄影表文件夹中有动画传票等非摄影表图片，AI 也会在识别后将其排除。
+点击“开始处理”后，会另开一个用于处理的 After Effects 窗口，完成后自动关闭。
+正在使用的 AE 可保持原样继续工作（不会改动未保存的内容）。
+运行期间，请勿同时打开或编辑目标镜头的 AE 工程。
+
+6. 完成与更新
+检查 AEP·ARDJ 及确认/失败备注，最终检查由作业人员进行。摄像机暂缓不算完成。
+处理结束后，保存成功的镜头的工作文件（_timesheet_auto、LO 转换文件）以及上级文件夹中的 _sessions 和结果摘要文件会被自动删除。
+AEP 使用的文件会保留；失败的镜头会保留工作文件，以便查明原因。
+更新后，自行注册的作品（assets\AE-AutoSet_TeamKit\projects）仍会保留。更新前请先完成作业，并备份安装文件夹。

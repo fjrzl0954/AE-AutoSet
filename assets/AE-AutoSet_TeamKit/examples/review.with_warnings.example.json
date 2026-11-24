@@ -1,0 +1,66 @@
+{
+  "cut_number": "900",
+  "cut_raw": "899",
+  "second": "1+0",
+  "second_confidence": 1.0,
+  "sheet_number": 1,
+  "sheet_count": 1,
+  "sheet_raw": null,
+  "header_source": {
+    "cut": "scene_folder",
+    "sheet": "selection_order",
+    "second": "visual_review"
+  },
+  "tracks": [
+    {
+      "caption": "A",
+      "events": [
+        {"sheet_frame": 1, "type": "cell", "cell_number": 1},
+        {"sheet_frame": 7, "type": "cell", "cell_number": 8},
+        {"sheet_frame": 13, "type": "empty", "cell_number": null}
+      ]
+    }
+  ],
+  "uncertain_items": [
+    {
+      "resolution": "apply_with_warning",
+      "track": "A",
+      "sheet_frame": 7,
+      "cell_number": 8,
+      "candidates": [8, 3],
+      "reason": "SYNTHETIC EXAMPLE ONLY: enlarged strokes and comparison with nearby handwritten 8 and 3 support 8; record real image evidence before use."
+    }
+  ],
+  "review_warnings": [
+    {
+      "kind": "cut_folder_override",
+      "message": "SYNTHETIC EXAMPLE: observed CUT 899 differs from folder DEMO_SC900; output uses folder CUT 900."
+    },
+    {
+      "kind": "sheet_inferred",
+      "message": "SYNTHETIC EXAMPLE: blank SHEET header; actual input list contains one image, processed as page 1 of 1.",
+      "sheet_number": 1
+    },
+    {
+      "kind": "cell_candidate_applied",
+      "message": "SYNTHETIC EXAMPLE: A7F uses cell 8 after image comparison; candidates and evidence are retained for review.",
+      "track": "A",
+      "sheet_frame": 7,
+      "page_sheet_frame": 7,
+      "sheet_number": 1,
+      "cell_number": 8,
+      "candidates": [8, 3],
+      "reason": "SYNTHETIC EXAMPLE ONLY: enlarged strokes and nearby handwriting support 8, not sequence completion alone."
+    },
+    {
+      "kind": "revised_source",
+      "message": "SYNTHETIC EXAMPLE: exact A_r revised source is preferred over A for the same A track.",
+      "track": "A",
+      "source_folder": "A_r"
+    }
+  ],
+  "audit_entry": {
+    "kind": "example_only",
+    "note": "Fictional schema example, not a production answer or inspected image. Replace every value and evidence statement after reviewing the current input. Unresolved items without approved resolution remain blocking."
+  }
+}

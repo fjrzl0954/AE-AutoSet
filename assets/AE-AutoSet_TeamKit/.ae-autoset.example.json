@@ -1,0 +1,19 @@
+{
+  "profile_version": 1,
+  "project_code": "DEMO",
+  "template_aep": "DEMO_SC000.tk1.aep",
+  "scene_folder_pattern": "DEMO_SC{cut3}",
+  "output_aep": "{scene}.tk1.aep",
+  "output_ardj": "{scene}.ardj",
+  "sheet_folder": "SHEET",
+  "lo_source_folder": "LO",
+  "cell_target_comp": "01_Comp stage",
+  "lo_target_comp": "01_Comp stage",
+  "lo_project_folder": "01_LO",
+  "main_comp_template": "DEMO_SC000.tk1",
+  "main_comp_output": "{scene}.tk1",
+  "camera_layer": "camera",
+  "camera_target_comp": "01_Comp stage",
+  "camera_output_comp": "02_camera",
+  "fps": 24
+}

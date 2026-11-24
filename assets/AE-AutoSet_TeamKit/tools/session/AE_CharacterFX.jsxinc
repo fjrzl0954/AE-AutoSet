@@ -1,0 +1,5 @@
+/* Character FX is not part of the public edition. */
+var AE_CharacterFX = (function () {
+    function apply() { throw new Error("Character FX is not part of this edition."); }
+    return {apply:apply};
+}());

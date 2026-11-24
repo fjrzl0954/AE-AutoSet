@@ -1,0 +1,352 @@
+﻿/* Shared application core. Caller owns project lifecycle; never quits AE. */
+var AE_BatchScene = (function () {
+    function readJson(path) {
+        var file = new File(path);
+        file.encoding = "UTF-8";
+        if (!file.exists || !file.open("r")) { throw new Error("JSON을 열 수 없습니다: " + path); }
+        var text = file.read();
+        file.close();
+        if (text.length && text.charCodeAt(0) === 0xFEFF) { text = text.substring(1); }
+        return JSON.parse(text);
+    }
+    function writeJson(path, value) {
+        var file = new File(path);
+        file.encoding = "UTF-8";
+        if (!file.open("w")) { throw new Error("보고서를 저장할 수 없습니다: " + path); }
+        file.write(JSON.stringify(value, null, 2));
+        file.close();
+    }
+    function escapeRegExp(value) { return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+    function findProjectFolder(name) {
+        for (var i = 1; i <= app.project.numItems; i++) {
+            var item = app.project.item(i);
+            if (item instanceof FolderItem && item.name === name) { return item; }
+        }
+        return null;
+    }
+    // Work-pack names. Defaults reproduce the original DEMO template exactly.
+    var DEFAULT_OPTIONS = {cellFootageFolder: "02_CELL", cellCompFolder: "20_CELL COMP",
+        cellAnchorLayers: ["BG_blur", "Camera Lens Blur", "BL"]};
+    var packOptions = DEFAULT_OPTIONS;
+    function useJobOptions(job) {
+        // An explicit empty list means "no anchor": cells go to the top of the composition.
+        var anchors = job && job.cell_anchor_layers instanceof Array ? job.cell_anchor_layers : DEFAULT_OPTIONS.cellAnchorLayers;
+        packOptions = {
+            cellFootageFolder: (job && job.cell_footage_folder) || DEFAULT_OPTIONS.cellFootageFolder,
+            cellCompFolder: (job && job.cell_comp_folder) || DEFAULT_OPTIONS.cellCompFolder,
+            cellAnchorLayers: anchors
+        };
+    }
+    function normalizedLayerName(name) {
+        return String(name).replace(/^\s+|\s+$/g, "").replace(/\s+/g, " ").toLowerCase();
+    }
+    // Cells go directly above the topmost layer whose name is one of the configured anchors.
+    function findCellAnchor(comp) {
+        var wanted = {};
+        for (var n = 0; n < packOptions.cellAnchorLayers.length; n++) { wanted[normalizedLayerName(packOptions.cellAnchorLayers[n])] = true; }
+        for (var i = 1; i <= comp.numLayers; i++) {
+            if (wanted[normalizedLayerName(comp.layer(i).name)] === true) { return comp.layer(i); }
+        }
+        return null;
+    }
+    function findOrCreateCellCompFolder() {
+        var name = packOptions.cellCompFolder;
+        var folder = findProjectFolder(name) || (name === "20_CELL COMP" ? findProjectFolder("20_CELL_COMP") : null);
+        return folder || app.project.items.addFolder(name);
+    }
+    function findTrackLayers(comp, caption) {
+        var result = [];
+        for (var i = 1; i <= comp.numLayers; i++) {
+            var layer = comp.layer(i);
+            if (layer.canSetTimeRemapEnabled && AETimesheetCore.normalizeName(layer.name) === AETimesheetCore.normalizeName(caption)) { result.push(layer); }
+        }
+        return result;
+    }
+    function findSequenceFile(sceneFolder, caption) {
+        var root = new Folder(sceneFolder);
+        if (!root.exists) { return null; }
+        var pattern = new RegExp("^" + escapeRegExp(caption) + "\\d+\\.(tga|png|jpg|jpeg|tif|tiff|bmp)$", "i");
+        var aliases = [String(caption).toLowerCase() + "_r", String(caption).toLowerCase()];
+        for (var a = 0; a < aliases.length; a++) {
+            var folders = root.getFiles(function (entry) { return entry instanceof Folder && String(entry.name).toLowerCase() === aliases[a]; });
+            for (var f = 0; f < folders.length; f++) {
+                var files = folders[f].getFiles(function (entry) { return entry instanceof File && pattern.test(entry.name); });
+                files.sort(function (left, right) {
+                    var numberOrder = parseInt(left.name.substring(String(caption).length), 10) - parseInt(right.name.substring(String(caption).length), 10);
+                    var leftName = left.name.toLowerCase(), rightName = right.name.toLowerCase();
+                    return numberOrder || (leftName < rightName ? -1 : (leftName > rightName ? 1 : 0));
+                });
+                if (files.length) { return files[0]; }
+            }
+        }
+        return null;
+    }
+    function isRevisedSequence(file, caption) {
+        return !!file && !!file.parent && String(file.parent.name).toLowerCase() === String(caption).toLowerCase() + "_r";
+    }
+    function sameSourceFile(left, right) {
+        return !!left && !!right && String(left.fsName).toLowerCase().replace(/\\/g, "/") === String(right.fsName).toLowerCase().replace(/\\/g, "/");
+    }
+    function trackSourceFile(layer, caption) {
+        var leaf = AETimesheetCore.resolveLeafLayer(layer, caption);
+        return leaf && leaf.source && leaf.source.file ? leaf.source.file : null;
+    }
+    function replaceTrackSource(layer, caption, footage) {
+        var leaf = AETimesheetCore.resolveLeafLayer(layer, caption);
+        if (!leaf || leaf.source instanceof CompItem) { throw new Error(caption + " 셀 컴프의 수정본 교체 대상 레이어를 하나로 확정할 수 없습니다."); }
+        leaf.replaceSource(footage, false);
+        leaf.name = caption;
+    }
+    function importTrackFootage(sceneFolder, caption, fps, first) {
+        first = first || findSequenceFile(sceneFolder, caption);
+        if (!first) { return null; }
+        var options = new ImportOptions(first);
+        options.sequence = true;
+        options.forceAlphabetical = false;
+        var footage = app.project.importFile(options);
+        footage.name = caption;
+        try { footage.mainSource.conformFrameRate = fps; } catch (ignored) {}
+        var targetFolder = findProjectFolder(packOptions.cellFootageFolder);
+        if (targetFolder) { footage.parentFolder = targetFolder; }
+        return footage;
+    }
+    function prepareTrackLayers(comp, data, sceneFolder, sourceSequences) {
+        var mapping = {}, imported = [], skipped = [], sourceMappings = [], reviewWarnings = [], anchor = findCellAnchor(comp);
+        for (var t = data.tracks.length - 1; t >= 0; t--) {
+            var track = data.tracks[t];
+            if (!track.events.length) { continue; }
+            var matches = findTrackLayers(comp, track.caption);
+            if (matches.length > 1) { throw new Error(track.caption + " 트랙과 이름이 같은 레이어가 여러 개입니다."); }
+            var layer = matches.length === 1 ? matches[0] : null;
+            var first = sourceSequences ? (sourceSequences[track.caption] ? new File(sourceSequences[track.caption].first_file) : null) : findSequenceFile(sceneFolder, track.caption);
+            if (!layer) {
+                var footage = importTrackFootage(sceneFolder, track.caption, data.sheet_fps, first);
+                if (!footage) { skipped.push(track.caption); continue; }
+                layer = comp.layers.add(footage);
+                layer.name = track.caption;
+                imported.push(track.caption);
+            } else if (first && (sourceSequences || isRevisedSequence(first, track.caption)) && !sameSourceFile(first, trackSourceFile(layer, track.caption))) {
+                var revised = importTrackFootage(sceneFolder, track.caption, data.sheet_fps, first);
+                replaceTrackSource(layer, track.caption, revised);
+                imported.push(track.caption);
+            }
+            var sourceFile = trackSourceFile(layer, track.caption), isRevised = isRevisedSequence(sourceFile, track.caption);
+            var selected = sourceSequences ? sourceSequences[track.caption] : null;
+            var originalFolder = selected ? selected.original_folder : (sourceFile ? sourceFile.parent.fsName : "");
+            if (selected) { isRevised = String(new Folder(originalFolder).name).toLowerCase() === String(track.caption).toLowerCase() + "_r"; }
+            sourceMappings.push({caption: track.caption, sourceFolder: originalFolder, sourceFile: sourceFile ? sourceFile.fsName : "", revised: isRevised,
+                sourceFrameByNumber: selected ? selected.source_frame_by_number : null});
+            if (isRevised) { reviewWarnings.push({kind: "revised_source", track: track.caption, message: track.caption + "셀 → " + new Folder(originalFolder).name + " 수정본으로 매핑", source_folder: originalFolder}); }
+            if (anchor && layer !== anchor) { layer.moveBefore(anchor); }
+            anchor = layer;
+            mapping[track.caption] = layer;
+        }
+        imported.reverse();
+        skipped.reverse();
+        sourceMappings.reverse();
+        reviewWarnings.reverse();
+        return {mapping: mapping, imported: imported, skipped: skipped, sourceMappings: sourceMappings, reviewWarnings: reviewWarnings};
+    }
+    function wrapperLayerForSource(comp, source) {
+        for (var i = 1; i <= comp.numLayers; i++) { if (comp.layer(i).source === source) { return comp.layer(i); } }
+        return null;
+    }
+    function applyWhiteColorKey(layer) {
+        var effects = layer.property("ADBE Effect Parade");
+        if (!effects) { throw new Error(layer.name + " 레이어에 Color Key를 적용할 수 없습니다."); }
+        var colorKey = null;
+        for (var i = 1; i <= effects.numProperties; i++) {
+            if (effects.property(i).matchName === "ADBE Color Key") { colorKey = effects.property(i); break; }
+        }
+        if (!colorKey) { colorKey = effects.addProperty("ADBE Color Key"); }
+        if (!colorKey || colorKey.numProperties < 1) { throw new Error(layer.name + " 레이어의 Color Key 속성을 찾지 못했습니다."); }
+        colorKey.property(1).setValue([1, 1, 1]);
+        try { colorKey.enabled = true; } catch (ignored) {}
+    }
+    function ensureMappedCellPrecomps(comp, data, mapping) {
+        var entries = [], created = [], keyed = [], targetFolder = null;
+        for (var t = 0; t < data.tracks.length; t++) {
+            var track = data.tracks[t], layer = mapping[track.caption];
+            if (!track.events.length || !layer) { continue; }
+            for (var m = 0; m < entries.length; m++) {
+                if (entries[m].layer === layer) { throw new Error(entries[m].caption + "와 " + track.caption + " 트랙이 같은 레이어에 매핑되어 있습니다."); }
+            }
+            entries.push({caption: track.caption, layer: layer});
+        }
+        for (t = entries.length - 1; t >= 0; t--) {
+            var entry = entries[t], current = entry.layer;
+            if (current.source instanceof CompItem) {
+                applyWhiteColorKey(AETimesheetCore.resolveLeafLayer(current, entry.caption));
+                current.name = entry.caption;
+                keyed.push(entry.caption);
+                continue;
+            }
+            applyWhiteColorKey(current);
+            keyed.push(entry.caption);
+            if (!targetFolder) { targetFolder = findOrCreateCellCompFolder(); }
+            var cellComp = comp.layers.precompose([current.index], entry.caption, true);
+            cellComp.name = entry.caption;
+            cellComp.parentFolder = targetFolder;
+            var wrapper = wrapperLayerForSource(comp, cellComp);
+            if (!wrapper) { throw new Error(entry.caption + " 셀 프리컴프 레이어를 찾지 못했습니다."); }
+            wrapper.name = entry.caption;
+            wrapper.comment = "AE Timesheet Auto / CELL " + entry.caption;
+            mapping[entry.caption] = wrapper;
+            created.push(entry.caption);
+        }
+        created.reverse();
+        keyed.reverse();
+        return {created: created, keyed: keyed};
+    }
+    function orderMappedCellLayers(comp, data, mapping) {
+        var entries = [], anchor = null, result = [];
+        for (var t = 0; t < data.tracks.length; t++) {
+            var track = data.tracks[t], layer = mapping[track.caption];
+            if (!track.events.length || !layer) { continue; }
+            entries.push({caption: track.caption, layer: layer});
+        }
+        entries.sort(function (a, b) {
+            return a.caption < b.caption ? -1 : (a.caption > b.caption ? 1 : 0);
+        });
+        // Only configured anchor names count, never a camera controller or a cell effect.
+        anchor = findCellAnchor(comp);
+        for (var i = 0; i < entries.length; i++) {
+            if (anchor && entries[i].layer !== anchor) { entries[i].layer.moveBefore(anchor); }
+            else if (!anchor) { entries[i].layer.moveToBeginning(); }
+            anchor = entries[i].layer;
+        }
+        entries.sort(function (a, b) { return a.layer.index - b.layer.index; });
+        for (i = 0; i < entries.length; i++) { result.push(entries[i].caption); }
+        return result;
+    }
+    function findColorKey(layer) {
+        var effects = layer.property("ADBE Effect Parade");
+        if (!effects) { return null; }
+        for (var i = 1; i <= effects.numProperties; i++) { if (effects.property(i).matchName === "ADBE Color Key") { return effects.property(i); } }
+        return null;
+    }
+    function snapshot(data, mapping) {
+        var result = [];
+        for (var t = 0; t < data.tracks.length; t++) {
+            var track = data.tracks[t];
+            if (!track.events.length) { continue; }
+            var wrapper = mapping[track.caption];
+            if (!wrapper) { continue; }
+            var leaf = AETimesheetCore.resolveLeafLayer(wrapper, track.caption);
+            var remap = leaf.property("ADBE Time Remapping");
+            var colorKey = findColorKey(leaf);
+            result.push({
+                caption: track.caption,
+                wrapper: wrapper.name,
+                precomp: wrapper.source instanceof CompItem ? wrapper.source.name : "",
+                leaf: leaf.name,
+                keyCount: remap ? remap.numKeys : 0,
+                colorKey: !!colorKey,
+                keyColor: colorKey ? colorKey.property(1).value : null
+            });
+        }
+        return result;
+    }
+    function applyAvailableTracks(comp, data, mapping, sourceSequences) {
+        var applied = [];
+        for (var t = 0; t < data.tracks.length; t++) {
+            var track = data.tracks[t], layer = mapping[track.caption];
+            if (!track.events.length || !layer) { continue; }
+            var selected = sourceSequences ? sourceSequences[track.caption] : null;
+            applied.push(AETimesheetCore.applyTrack(comp, layer, track, data, {sourceFrameByNumber: selected ? selected.source_frame_by_number : null}).name);
+        }
+        return applied;
+    }
+    function renameTemplateMainComp(oldName, newName) {
+        var renamed = false;
+        if (!oldName || !newName) { throw new Error("Configured main composition names are required."); }
+        for (var i = 1; i <= app.project.numItems; i++) {
+            var item = app.project.item(i);
+            if (item instanceof CompItem && item.name === oldName) { item.name = newName; renamed = true; }
+        }
+        return renamed;
+    }
+    function closeWithoutSaving() {
+        try { app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES); } catch (ignored) {}
+    }
+
+
+    function applyCurrent(job) {
+        var projectFile = new File(job.project);
+        var templateFile = job.template ? new File(job.template) : null;
+        if (!app.project.file || !sameSourceFile(app.project.file, projectFile) ||
+                (templateFile ? sameSourceFile(projectFile, templateFile) : /DEMO_SC0+\./i.test(projectFile.name))) { throw new Error("Wrong project or protected master."); }
+        var result = {scene:job.scene,ok:false,saved:false,error:"",imported:[],skipped:[],applied:[],created:[],keyed:[],tracks:[],sourceMappings:[],reviewWarnings:[]};
+        useJobOptions(job);
+        try {
+                var data = readJson(job.timesheet);
+                var compName = job.comp || "01_Comp stage", comp = AETimesheetCore.findComp(compName);
+                if (!comp) { throw new Error("설정된 셀 작업 컴포지션을 찾을 수 없습니다: " + compName); }
+                AETimesheetCore.validate(data, comp);
+                app.beginUndoGroup("AE Timesheet Auto Batch Apply");
+                var prepared = prepareTrackLayers(comp, data, job.sceneFolder, job.source_sequences);
+                result.sourceMappings = prepared.sourceMappings;
+                result.reviewWarnings = prepared.reviewWarnings;
+                var canvasOptions = {stageName:compName, outputCompName:job.camera_output_comp || "02_camera",
+                    cameraLayer:job.camera_layer, protectedTemplate:job.template};
+                result.cellCanvas = AE_CellCanvas.apply(app.project, comp, prepared.mapping, canvasOptions);
+                result.reviewWarnings = result.reviewWarnings.concat(result.cellCanvas.warnings);
+                var cells = ensureMappedCellPrecomps(comp, data, prepared.mapping);
+                result.cellCanvasAfterPrecompose = AE_CellCanvas.inspect(app.project, comp, prepared.mapping, canvasOptions);
+                if (result.cellCanvasAfterPrecompose.changed_comp_count) { throw new Error("셀 프리컴프 작업 캔버스 크기 검증에 실패했습니다."); }
+                result.cellLayerOrderTopToBottom = orderMappedCellLayers(comp, data, prepared.mapping);
+                var applied = applyAvailableTracks(comp, data, prepared.mapping, job.source_sequences);
+                var mainTemplateName = job.main_comp_template || "DEMO_SC000.tk1", mainOutputName = job.main_comp_output || job.scene + ".tk1";
+                result.renamedMainComp = renameTemplateMainComp(mainTemplateName, mainOutputName);
+                var mainComp = AETimesheetCore.findComp(mainOutputName);
+                if (!mainComp) { throw new Error("최상위 씬 컴포지션을 찾을 수 없습니다: " + mainOutputName); }
+                result.durationSync = AETimesheetCore.fitProjectDurations(comp, mainComp, data, prepared.mapping);
+                var loCompName = job.lo_comp || compName, loComp = loCompName === compName ? comp : AETimesheetCore.findComp(loCompName);
+                if (!loComp) { throw new Error("설정된 LO 작업 컴포지션을 찾을 수 없습니다: " + loCompName); }
+                if (loComp !== comp) { AETimesheetCore.fitDuration(loComp, data); }
+                result.layout = AETimesheetLayout.apply(loComp, job.sceneFolder, data.duration.total_frames / data.sheet_fps,
+                    job.layout_sources, {sourceFolderName:job.lo_source_folder || "LO", projectFolderName:job.lo_project_folder || "01_LO"});
+                result.reviewWarnings = result.reviewWarnings.concat(result.layout.warnings || []);
+                if (job.camera && job.camera.mode === "expected") {
+                    var cameraPlan = readJson(job.camera.plan), cameraSource = new File(job.sceneFolder + "/" + cameraPlan.layout_source);
+                    var cameraLayoutAvailable = false;
+                    for (var layoutIndex = 0; layoutIndex < result.layout.sourceMappings.length; layoutIndex++) {
+                        if (sameSourceFile(new File(result.layout.sourceMappings[layoutIndex].originalSource), cameraSource)) {
+                            cameraLayoutAvailable = true; break;
+                        }
+                    }
+                    if (cameraLayoutAvailable) { result.camera = AE_CameraLayout.apply(app.project, cameraPlan, result.layout,
+                        {projectPath:job.project, sceneFolder:job.sceneFolder, cut:job.cut, loSourceFolder:job.lo_source_folder,
+                         outputCompName:job.camera_output_comp}); }
+                    else {
+                        result.camera = {status:"deferred_lo_import_failed", reason:"카메라 기준 LO를 원본·RGB 복사본 모두 가져오지 못해 카메라만 보류"};
+                        result.reviewWarnings.push({kind:"camera_deferred_lo_import", message:result.camera.reason, source_file:cameraSource.fsName});
+                    }
+                } else { result.camera = {status: job.camera ? job.camera.status : "not_applicable", reason: job.camera ? job.camera.reason : ""}; }
+                result.tracks = snapshot(data, prepared.mapping);
+                if(job.character_fx){
+                    try { result.characterFX=AE_CharacterFX.apply(comp,prepared.mapping,job.character_fx); }
+                    catch(fxError) { result.characterFX={tracks:[],error:String(fxError)}; result.reviewWarnings.push({kind:'character_fx_deferred',message:String(fxError)}); }
+                    for(var fxIndex=0;fxIndex<result.characterFX.tracks.length;fxIndex++){
+                        var fxResult=result.characterFX.tracks[fxIndex];
+                        if(fxResult.status!=='applied')result.reviewWarnings.push({kind:'character_fx_deferred',track:fxResult.caption,message:fxResult.reason});
+                    }
+                }
+                app.project.save();
+                result.saved = projectFile.exists && projectFile.length > 0 && app.project.file && app.project.file.fsName === projectFile.fsName;
+                if (!result.saved) { throw new Error("현재 프로젝트 저장 검증에 실패했습니다."); }
+                result.imported = prepared.imported;
+                result.skipped = prepared.skipped;
+                result.applied = applied;
+                result.created = cells.created;
+                result.keyed = cells.keyed;
+                result.project = app.project.file.fsName;
+                result.size = projectFile.length;
+                result.dataCompCreated = !!AETimesheetCore.findComp("ae_remap_data");
+                result.ok = true;
+
+        } finally { try { app.endUndoGroup(); } catch (ignored) {} }
+        return result;
+    }
+    return {applyCurrent:applyCurrent};
+}());

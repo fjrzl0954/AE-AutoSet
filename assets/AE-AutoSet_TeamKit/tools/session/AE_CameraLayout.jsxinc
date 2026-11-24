@@ -1,0 +1,322 @@
+﻿/*
+ * Reviewed layout rectangles -> the existing 2D F's Frame camera rig.
+ * ES3 / ExtendScript. No file IO, project lifecycle, or save operations.
+ * The caller owns an undo group and must not save after a thrown write error.
+ */
+var AE_CameraLayout = (function () {
+    var EPSILON = 0.00001, SLOW_INFLUENCE = 33.333333;
+
+    function fail(message) { throw new Error("Camera layout: " + message); }
+    function finite(value) { return typeof value === "number" && isFinite(value); }
+    function integer(value) { return finite(value) && Math.floor(value) === value; }
+    function isArray(value) { return Object.prototype.toString.call(value) === "[object Array]"; }
+    function close(left, right) { return finite(left) && finite(right) && Math.abs(left - right) <= EPSILON; }
+    function nonempty(value) { return typeof value === "string" && /\S/.test(value); }
+    function pathKey(value) { return String(value).replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase(); }
+    function equalVector(left, right) {
+        if (!left || !right || left.length !== right.length) { return false; }
+        for (var i = 0; i < left.length; i++) { if (!close(left[i], right[i])) { return false; } }
+        return true;
+    }
+    function readVector(value, name) {
+        if (!value || (value.length !== 2 && value.length !== 3)) { fail(name + " must have two or three components."); }
+        var result = [];
+        for (var i = 0; i < value.length; i++) {
+            if (!finite(value[i])) { fail(name + " contains a non-finite component."); }
+            result.push(value[i]);
+        }
+        return result;
+    }
+    function findComp(project, name) {
+        var result = null;
+        for (var i = 1; i <= project.numItems; i++) {
+            var item = project.item(i);
+            if (item instanceof CompItem && item.name === name) {
+                if (result) { fail("Ambiguous composition: " + name); }
+                result = item;
+            }
+        }
+        if (!result) { fail("Missing composition: " + name); }
+        return result;
+    }
+    function findNamedLayer(comp, name) {
+        var result = null;
+        for (var i = 1; i <= comp.numLayers; i++) {
+            if (comp.layer(i).name === name) {
+                if (result) { fail("Ambiguous layer: " + comp.name + "/" + name); }
+                result = comp.layer(i);
+            }
+        }
+        if (!result) { fail("Missing layer: " + comp.name + "/" + name); }
+        return result;
+    }
+    function property(group, matchName, context) {
+        var value = group ? group.property(matchName) : null;
+        if (!value) { fail("Missing property: " + context + "/" + matchName); }
+        return value;
+    }
+    function transform(layer) { return property(layer, "ADBE Transform Group", layer.name); }
+    function requireNoExpression(prop, name) {
+        if (prop.expressionEnabled || (typeof prop.expression === "string" && prop.expression.length)) {
+            fail("Expressions on " + name + " are not supported and were preserved.");
+        }
+    }
+    function staticValue(prop, name) {
+        requireNoExpression(prop, name);
+        if (prop.numKeys !== 0) { fail("Animated " + name + " is not supported."); }
+        return prop.value;
+    }
+    function require2D(layer, name) {
+        if (layer.threeDLayer || layer.parent) { fail(name + " must be unparented and 2D."); }
+        if (typeof CameraLayer !== "undefined" && layer instanceof CameraLayer) { fail("A native 3D camera is not supported."); }
+        if (typeof AutoOrientType !== "undefined" && layer.autoOrient !== undefined && layer.autoOrient !== AutoOrientType.NO_AUTO_ORIENT) {
+            fail(name + " auto-orientation is not supported.");
+        }
+    }
+    function requireSquarePixels(item, name) {
+        if (item.pixelAspect !== undefined && !close(item.pixelAspect, 1)) { fail(name + " must use square pixels."); }
+    }
+    function frameSize(camera, project, outputName) {
+        var effects = property(camera, "ADBE Effect Parade", camera.name), effect = null;
+        for (var i = 1; i <= effects.numProperties; i++) {
+            var candidate = effects.property(i);
+            if (candidate.matchName === "F's Frame") {
+                if (effect) { fail("Multiple F's Frame effects are ambiguous."); }
+                effect = candidate;
+            }
+        }
+        if (!effect) {
+            // Without the F's Frame plug-in the camera frame is the output composition itself.
+            var output = findComp(project, outputName || "02_camera");
+            return [output.width, output.height];
+        }
+        var width = staticValue(property(effect, "F's Frame-0001", "F's Frame"), "F's Frame width");
+        var height = staticValue(property(effect, "F's Frame-0002", "F's Frame"), "F's Frame height");
+        if (!finite(width) || !finite(height) || width <= 0 || height <= 0) { fail("Invalid F's Frame size."); }
+        return [width, height];
+    }
+    function findLayout(stage, absolutePath) {
+        var result = null, expected = pathKey(absolutePath);
+        for (var i = 1; i <= stage.numLayers; i++) {
+            var layer = stage.layer(i);
+            if (layer.source instanceof FootageItem && layer.source.file && pathKey(layer.source.file.fsName) === expected) {
+                if (result) { fail("Multiple layout layers use the same source path."); }
+                result = layer;
+            }
+        }
+        if (!result) { fail("Missing direct layout layer for " + absolutePath); }
+        if (!result.source.mainSource || result.source.mainSource.isStill !== true) { fail("Layout source must be a single still image."); }
+        return result;
+    }
+    function inverseExpressions(project, stage, cameraName, frame, outputName) {
+        outputName = outputName || "02_camera";
+        var output = findComp(project, outputName), layer = null;
+        if (!close(output.width, frame[0]) || !close(output.height, frame[1])) { fail(outputName + " size differs from F's Frame."); }
+        requireSquarePixels(output, outputName);
+        for (var i = 1; i <= output.numLayers; i++) {
+            if (output.layer(i).source === stage) {
+                if (layer) { fail(outputName + " contains multiple stage instances."); }
+                layer = output.layer(i);
+            }
+        }
+        if (!layer) { fail(outputName + " has no direct stage instance."); }
+        require2D(layer, outputName + " stage instance");
+        var group = transform(layer), fields = ["ADBE Anchor Point", "ADBE Position", "ADBE Scale", "ADBE Rotate Z"], result = [];
+        var cameraReference = 'source.layer("' + cameraName + '")';
+        var expected = [
+            cameraReference + ".position", cameraReference + ".anchor_point",
+            "[10000/" + cameraReference + ".scale[0],10000/" + cameraReference + ".scale[1]]",
+            "-" + cameraReference + ".rotation"
+        ];
+        for (i = 0; i < fields.length; i++) {
+            var prop = property(group, fields[i], outputName + " stage instance");
+            if (!prop.expressionEnabled || !nonempty(prop.expression)) { fail("Missing active inverse-rig expression: " + fields[i]); }
+            var canonical = String(prop.expression).replace(/\s/g, "").replace(/'/g, '"').replace(/;+$/, "");
+            if (i === 1) { canonical = canonical.replace(/\.anchorPoint$/, ".anchor_point"); }
+            if (canonical !== expected[i].replace(/\s/g, "")) { fail("Unsupported inverse-rig expression: " + fields[i]); }
+            result.push({property: fields[i], expression: prop.expression, enabled: true});
+        }
+        return result;
+    }
+    function validatePlan(plan, options) {
+        options = options || {};
+        if (!plan || plan.version !== 1) { fail("Plan version must be 1."); }
+        if (typeof plan.cut_number !== "string" || !/^\d+$/.test(plan.cut_number)) { fail("cut_number must be a digit string."); }
+        if (!finite(plan.fps) || plan.fps <= 0 || !integer(plan.total_frames) || plan.total_frames < 1) { fail("Invalid fps or total_frames."); }
+        if (!nonempty(plan.stage_name) || !nonempty(plan.camera_layer)) { fail("stage_name and camera_layer are required."); }
+        var layoutParts = typeof plan.layout_source === "string" ? plan.layout_source.replace(/\\/g, "/").split("/") : [];
+        if (layoutParts.length !== 2 || layoutParts[0].toLowerCase() !== String(options.loSourceFolder || "LO").toLowerCase() || !nonempty(layoutParts[1]) ||
+                layoutParts[1] === "." || layoutParts[1] === ".." || /[<>:"|?*]/.test(layoutParts[1])) {
+            fail("layout_source must be a direct scene-relative LO/filename path.");
+        }
+        if (!isArray(plan.image_size) || plan.image_size.length !== 2 ||
+                !integer(plan.image_size[0]) || !integer(plan.image_size[1]) || plan.image_size[0] < 1 || plan.image_size[1] < 1) {
+            fail("image_size must contain two positive integers.");
+        }
+        if (plan.replace_existing !== undefined && typeof plan.replace_existing !== "boolean") { fail("replace_existing must be boolean."); }
+        if (!isArray(plan.keys) || !plan.keys.length) { fail("At least one reviewed camera key is required."); }
+        var previous = 0;
+        for (var i = 0; i < plan.keys.length; i++) {
+            var key = plan.keys[i];
+            if (!key || !integer(key.frame) || key.frame <= previous || key.frame > plan.total_frames) {
+                fail("Camera frames must be unique, increasing integers in the 1-based cut range.");
+            }
+            if (!nonempty(key.label)) { fail("Each reviewed rectangle needs a label."); }
+            if (key.slow !== undefined && typeof key.slow !== "boolean") { fail("slow must be boolean when present."); }
+            if (i === 0 && key.slow === true) { fail("The first camera key cannot be slow."); }
+            var rect = key.rect;
+            if (!isArray(rect) || rect.length !== 4 || !finite(rect[0]) || !finite(rect[1]) || !finite(rect[2]) || !finite(rect[3]) ||
+                    rect[0] < 0 || rect[1] < 0 || rect[2] > plan.image_size[0] || rect[3] > plan.image_size[1] ||
+                    rect[0] >= rect[2] || rect[1] >= rect[3]) {
+                fail("Rectangle must be [left, top, right, bottom] within the original image.");
+            }
+            previous = key.frame;
+        }
+    }
+    function mappedLayoutPath(absolutePath, layoutResult) {
+        if (!layoutResult || !layoutResult.sourceMappings) { return absolutePath; }
+        var expected = pathKey(absolutePath);
+        for (var i = 0; i < layoutResult.sourceMappings.length; i++) {
+            var mapping = layoutResult.sourceMappings[i];
+            if (mapping && pathKey(mapping.originalSource) === expected && mapping.importSource) { return mapping.importSource; }
+        }
+        return absolutePath;
+    }
+    function prepare(project, plan, layoutResult, options) {
+        options = options || {};
+        validatePlan(plan, options);
+        if (!project || !project.file || !project.file.parent) { fail("A saved scene project is required."); }
+        if (options.projectPath && pathKey(project.file.fsName) !== pathKey(options.projectPath)) { fail("Project differs from the profiled scene project."); }
+        if (options.sceneFolder && pathKey(project.file.parent.fsName) !== pathKey(options.sceneFolder)) { fail("Project folder differs from the profiled scene folder."); }
+        if (options.cut !== undefined && parseInt(options.cut, 10) !== parseInt(plan.cut_number, 10)) { fail("Plan CUT differs from the profiled scene cut."); }
+        if (options.cut === undefined) {
+            var projectName = String(project.file.name || ""), folderName = String(project.file.parent.name || "");
+            var projectCut = /DEMO_SC(\d+)(?:\.|$)/i.exec(projectName), folderCut = /^DEMO_SC(\d+)$/i.exec(folderName);
+            if (projectCut && parseInt(projectCut[1], 10) === 0) { fail("Never modify the SC000 master template."); }
+            if ((projectCut && parseInt(projectCut[1], 10) !== parseInt(plan.cut_number, 10)) ||
+                    (folderCut && parseInt(folderCut[1], 10) !== parseInt(plan.cut_number, 10))) { fail("Plan CUT differs from the scene project path."); }
+        }
+        var stage = findComp(project, plan.stage_name), duration = plan.total_frames / plan.fps;
+        if (!close(stage.frameRate, plan.fps) || !close(stage.duration, duration)) { fail("Stage fps or duration differs from the reviewed plan."); }
+        requireSquarePixels(stage, "Stage");
+        var camera = findNamedLayer(stage, plan.camera_layer);
+        require2D(camera, "Camera rig");
+        if (camera.locked) { fail("Camera rig is locked; unlock it explicitly before applying."); }
+        if (!close(camera.startTime, 0) || camera.inPoint > EPSILON || camera.outPoint + EPSILON < duration) { fail("Camera rig must cover the whole cut without a start offset."); }
+        var reviewedPath = project.file.parent.fsName + "/" + plan.layout_source.replace(/\\/g, "/");
+        var absolutePath = mappedLayoutPath(reviewedPath, layoutResult);
+        var layout = findLayout(stage, absolutePath), source = layout.source;
+        require2D(layout, "Layout");
+        requireSquarePixels(source, "Layout");
+        if (source.width !== plan.image_size[0] || source.height !== plan.image_size[1]) { fail("Reviewed image_size differs from the imported layout source."); }
+        if (layout.inPoint > EPSILON || layout.outPoint + EPSILON < duration) { fail("Layout must cover the whole cut."); }
+        var loTransform = transform(layout), cameraTransform = transform(camera);
+        var loPositionProp = property(loTransform, "ADBE Position", "Layout");
+        if (loPositionProp.dimensionsSeparated) { fail("Separated layout position dimensions are not supported."); }
+        var loPosition = readVector(staticValue(loPositionProp, "layout Position"), "layout Position");
+        var loAnchor = readVector(staticValue(property(loTransform, "ADBE Anchor Point", "Layout"), "layout Anchor Point"), "layout Anchor Point");
+        var loScale = readVector(staticValue(property(loTransform, "ADBE Scale", "Layout"), "layout Scale"), "layout Scale");
+        var loRotation = staticValue(property(loTransform, "ADBE Rotate Z", "Layout"), "layout Rotation");
+        if (!close(loRotation, 0) || loScale[0] <= 0 || loScale[1] <= 0) { fail("Rotated, mirrored, or zero-scale layouts are not supported."); }
+        var frame = frameSize(camera, project, options.outputCompName);
+        var anchor = readVector(staticValue(property(cameraTransform, "ADBE Anchor Point", "Camera"), "camera Anchor Point"), "camera Anchor Point");
+        var rotation = staticValue(property(cameraTransform, "ADBE Rotate Z", "Camera"), "camera Rotation");
+        if (!close(rotation, 0) || !close(anchor[0], frame[0] / 2) || !close(anchor[1], frame[1] / 2) ||
+                (anchor.length === 3 && !close(anchor[2], 0))) { fail("Camera Anchor Point must be the frame center and Rotation must be zero."); }
+        var position = property(cameraTransform, "ADBE Position", "Camera"), scale = property(cameraTransform, "ADBE Scale", "Camera");
+        requireNoExpression(position, "camera Position"); requireNoExpression(scale, "camera Scale");
+        if (position.dimensionsSeparated || !position.isSpatial) { fail("Camera Position must be a combined spatial property."); }
+        if (!position.canVaryOverTime || !scale.canVaryOverTime) { fail("Camera Position and Scale must support keyframes."); }
+        if (!position.isInterpolationTypeValid(KeyframeInterpolationType.LINEAR) || !position.isInterpolationTypeValid(KeyframeInterpolationType.BEZIER) ||
+                !scale.isInterpolationTypeValid(KeyframeInterpolationType.LINEAR) || !scale.isInterpolationTypeValid(KeyframeInterpolationType.BEZIER)) {
+            fail("Camera properties do not support the required interpolation.");
+        }
+        var positionValue = readVector(position.value, "camera Position"), scaleValue = readVector(scale.value, "camera Scale");
+        if ((positionValue.length === 3 && !close(positionValue[2], 0)) || (scaleValue.length === 3 && !close(scaleValue[2], 100))) {
+            fail("Unexpected Z components on the 2D camera rig.");
+        }
+        var expressions = inverseExpressions(project, stage, camera.name, frame, options.outputCompName), keys = [];
+        for (var i = 0; i < plan.keys.length; i++) {
+            var input = plan.keys[i], r = input.rect;
+            var p = [loPosition[0] + ((r[0] + r[2]) / 2 - loAnchor[0]) * loScale[0] / 100,
+                loPosition[1] + ((r[1] + r[3]) / 2 - loAnchor[1]) * loScale[1] / 100];
+            var s = [(r[2] - r[0]) / frame[0] * loScale[0], (r[3] - r[1]) / frame[1] * loScale[1]];
+            if (positionValue.length === 3) { p.push(positionValue[2]); }
+            if (scaleValue.length === 3) { s.push(scaleValue[2]); }
+            keys.push({frame: input.frame, time: (input.frame - 1) / plan.fps, label: input.label,
+                rect: r.slice(0), slow: input.slow === true, position: p, scale: s,
+                interpolation: input.slow === true ? "BEZIER" : "LINEAR"});
+        }
+        return {position: position, scale: scale, keys: keys, report: {
+            ok: true, status: "validated", cut_number: plan.cut_number, fps: plan.fps, total_frames: plan.total_frames,
+            stage: stage.name, camera_layer: camera.name, layout_source: source.file.fsName, reviewed_layout_source: reviewedPath,
+            used_rgb_copy: pathKey(absolutePath) !== pathKey(reviewedPath), image_size: plan.image_size.slice(0),
+            frame_size: frame, keys: keys, previous_key_counts: {position: position.numKeys, scale: scale.numKeys},
+            replaced_existing: false, preserved_output_expressions: expressions
+        }};
+    }
+    function zeroes(count) { var result = []; for (var i = 0; i < count; i++) { result.push(0); } return result; }
+    function sameEase(actual, count) {
+        if (!actual || actual.length !== count) { return false; }
+        for (var i = 0; i < count; i++) {
+            if (!close(actual[i].speed, 0) || !close(actual[i].influence, SLOW_INFLUENCE)) { return false; }
+        }
+        return true;
+    }
+    function sameKeys(prop, keys, field, spatial) {
+        if (prop.numKeys !== keys.length) { return false; }
+        for (var i = 0; i < keys.length; i++) {
+            var index = i + 1, key = keys[i], mode = key.slow ? KeyframeInterpolationType.BEZIER : KeyframeInterpolationType.LINEAR;
+            if (!close(prop.keyTime(index), key.time) || !equalVector(prop.keyValue(index), key[field]) ||
+                    prop.keyInInterpolationType(index) !== mode || prop.keyOutInterpolationType(index) !== mode ||
+                    prop.keyTemporalAutoBezier(index) || prop.keyTemporalContinuous(index)) { return false; }
+            if (key.slow && (!sameEase(prop.keyInTemporalEase(index), spatial ? 1 : key[field].length) ||
+                    !sameEase(prop.keyOutTemporalEase(index), spatial ? 1 : key[field].length))) { return false; }
+            if (spatial && (prop.keySpatialAutoBezier(index) || prop.keyRoving(index) ||
+                    !equalVector(prop.keyInSpatialTangent(index), zeroes(key[field].length)) ||
+                    !equalVector(prop.keyOutSpatialTangent(index), zeroes(key[field].length)))) { return false; }
+        }
+        return true;
+    }
+    function easeArray(count) {
+        var result = [];
+        for (var i = 0; i < count; i++) { result.push(new KeyframeEase(0, SLOW_INFLUENCE)); }
+        return result;
+    }
+    function writeKeys(prop, keys, field, spatial) {
+        for (var i = prop.numKeys; i >= 1; i--) { prop.removeKey(i); }
+        for (i = 0; i < keys.length; i++) { prop.setValueAtTime(keys[i].time, keys[i][field]); }
+        for (i = 0; i < keys.length; i++) {
+            var index = i + 1, key = keys[i], mode = key.slow ? KeyframeInterpolationType.BEZIER : KeyframeInterpolationType.LINEAR;
+            prop.setTemporalAutoBezierAtKey(index, false);
+            prop.setTemporalContinuousAtKey(index, false);
+            prop.setInterpolationTypeAtKey(index, mode, mode);
+            if (key.slow) {
+                var ease = easeArray(spatial ? 1 : key[field].length);
+                prop.setTemporalEaseAtKey(index, ease, easeArray(ease.length));
+            }
+            if (spatial) {
+                prop.setSpatialAutoBezierAtKey(index, false);
+                prop.setSpatialContinuousAtKey(index, false);
+                prop.setSpatialTangentsAtKey(index, zeroes(key[field].length), zeroes(key[field].length));
+                prop.setRovingAtKey(index, false);
+            }
+        }
+    }
+    function apply(project, plan, layoutResult, options) {
+        var prepared = prepare(project, plan, layoutResult, options), report = prepared.report;
+        var existing = prepared.position.numKeys > 0 || prepared.scale.numKeys > 0;
+        var identical = existing && sameKeys(prepared.position, prepared.keys, "position", true) && sameKeys(prepared.scale, prepared.keys, "scale", false);
+        if (identical) { report.status = "unchanged"; return report; }
+        if (existing && plan.replace_existing !== true) { fail("Different camera keys already exist. Explicit replace_existing: true is required."); }
+        // All plan, rig, geometry, and replacement checks complete before the first mutation.
+        writeKeys(prepared.position, prepared.keys, "position", true);
+        writeKeys(prepared.scale, prepared.keys, "scale", false);
+        if (!sameKeys(prepared.position, prepared.keys, "position", true) || !sameKeys(prepared.scale, prepared.keys, "scale", false)) {
+            fail("Written camera keys failed read-back verification; do not save this project.");
+        }
+        report.status = "applied"; report.replaced_existing = existing;
+        return report;
+    }
+    return {apply: apply};
+}());

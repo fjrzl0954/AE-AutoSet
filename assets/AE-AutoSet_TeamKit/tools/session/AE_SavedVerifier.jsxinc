@@ -1,0 +1,271 @@
+var AE_SavedVerifier = function (cfg) {
+    var V = TaskVerification, work = new File(cfg.project).parent, tag = "scene";
+    var report = {ok: false, read_only: true, verified_utc: new Date().toUTCString(), checks: [], errors: [], warnings: [],
+        project: null, tracks: [], excluded_tracks: [], stage_order: [], layout: [], camera: null, source_identity_limit:
+        "AE first-file, duration, and frame-range checks do not prove every decoded sequence frame's image identity. Review irregular sequences or attach independently verified normalized-copy evidence."};
+    function check(id, ok, actual, expected) {
+        var result = {id: id, ok: !!ok, actual: V.safe(actual), expected: V.safe(expected)};
+        report.checks.push(result); if (!ok) { report.errors.push(id); } return !!ok;
+    }
+    function inspect(id, fn) {
+        try { fn(); } catch (e) { check(id + ".exception", false, e.toString() + (e.line ? " line=" + e.line : "")); }
+    }
+    function file(value) {
+        var name = String(value || "").replace(/\\/g, "/");
+        return new File(name.charAt(0) === "/" || name.charAt(1) === ":" ? name : work.fsName + "/" + name);
+    }
+    function duration(id, comp, frames, fps) {
+        check(id + ".duration", V.near(comp.frameRate, fps) && V.near(comp.duration, frames / fps),
+            {fps: comp.frameRate, duration: comp.duration, frames: comp.duration * comp.frameRate}, {fps: fps, frames: frames});
+    }
+    function span(id, layer, seconds) {
+        check(id + ".span", V.near(layer.startTime, 0) && V.near(layer.inPoint, 0) && V.near(layer.outPoint, seconds),
+            {startTime: layer.startTime, inPoint: layer.inPoint, outPoint: layer.outPoint}, {startTime: 0, inPoint: 0, outPoint: seconds});
+    }
+    function integer(n) { return typeof n === "number" && isFinite(n) && Math.floor(n) === n; }
+    function sourceFrame(number, frameMap) { return frameMap ? frameMap[String(number)] : number - 1; }
+    function validTrack(track, frames, capacity, frameMap) {
+        var previous = 0;
+        if (!track.events.length || track.events[0].sheet_frame !== 1) { return false; }
+        for (var i = 0; i < track.events.length; i++) {
+            var event = track.events[i];
+            if (!integer(event.sheet_frame) || event.sheet_frame <= previous || event.sheet_frame > frames) { return false; }
+            if (event.type !== "empty" && event.type !== "cell") { return false; }
+            if (event.type === "cell" && (!integer(event.cell_number) || event.cell_number < 1 ||
+                !integer(sourceFrame(event.cell_number, frameMap)) || sourceFrame(event.cell_number, frameMap) < 0 || sourceFrame(event.cell_number, frameMap) >= capacity)) { return false; }
+            previous = event.sheet_frame;
+        }
+        return true;
+    }
+    function keyMatches(prop, index, time, value) {
+        return index <= prop.numKeys && V.near(prop.keyTime(index), time) && V.near(prop.keyValue(index), value) &&
+            prop.keyInInterpolationType(index) === KeyframeInterpolationType.HOLD && prop.keyOutInterpolationType(index) === KeyframeInterpolationType.HOLD;
+    }
+    function opacity100(id, layer, frames, fps) {
+        var property = layer.property("ADBE Transform Group").property("ADBE Opacity"), failures = [];
+        for (var f = 1; f <= frames; f++) { if (!V.near(property.valueAtTime((f - 1) / fps, false), 100)) { failures.push(f); } }
+        check(id + ".opacity100", !property.expressionEnabled && failures.length === 0, {expression: property.expressionEnabled, failed_frames: failures});
+    }
+    function verifyCamera(stage, cfg, baseline, data) {
+        var current = V.camera(stage), mode = cfg.camera && cfg.camera.mode;
+        report.camera = {mode: mode, current: current};
+        if (mode === "unchanged") { check("camera.unchanged", V.same(current, baseline.camera), current, baseline.camera); return; }
+        if (mode !== "expected" || !cfg.camera.plan) { throw new Error("camera.mode must explicitly be unchanged or expected with a plan path."); }
+        var plan = V.read(file(cfg.camera.plan));
+        check("camera.planSceneAndDuration", plan.version === 1 && parseInt(plan.cut_number, 10) === parseInt(data.cut_number, 10) &&
+            V.near(plan.fps, data.sheet_fps) && plan.total_frames === data.duration.total_frames,
+            {version: plan.version, cut: plan.cut_number, fps: plan.fps, frames: plan.total_frames});
+        var camera = V.layer(stage, plan.camera_layer), cameraTransform = camera.property("ADBE Transform Group"), sourcePath = V.path(app.project.file.parent.fsName + "/" + plan.layout_source);
+        var layouts = [];
+        for (var i = 1; i <= stage.numLayers; i++) {
+            var layer = stage.layer(i);
+            if (layer.source instanceof FootageItem && layer.source.file && V.path(layer.source.file) === sourcePath) { layouts.push(layer); }
+        }
+        if (layouts.length !== 1) { throw new Error("Camera plan requires one exact layout source layer."); }
+        var lo = layouts[0], transform = lo.property("ADBE Transform Group"), p = transform.property("ADBE Position").valueAtTime(0, false);
+        var a = transform.property("ADBE Anchor Point").valueAtTime(0, false), s = transform.property("ADBE Scale").valueAtTime(0, false);
+        check("camera.layoutGeometrySupported", !lo.parent && !lo.threeDLayer && V.near(transform.property("ADBE Rotate Z").valueAtTime(0, false), 0) &&
+            lo.source.width === plan.image_size[0] && lo.source.height === plan.image_size[1] && s[0] > 0 && s[1] > 0);
+        var frameEffects = V.effectsByMatch(camera, "F's Frame");
+        if (frameEffects.length !== 1) { throw new Error("Expected one F's Frame effect."); }
+        var width = frameEffects[0].property("F's Frame-0001").value, height = frameEffects[0].property("F's Frame-0002").value;
+        var position = current.transform["ADBE Position"], scale = current.transform["ADBE Scale"], expected = [];
+        check("camera.exactKeyCounts", position.keys.length === plan.keys.length && scale.keys.length === plan.keys.length,
+            {position: position.keys.length, scale: scale.keys.length}, plan.keys.length);
+        for (i = 0; i < plan.keys.length; i++) {
+            var input = plan.keys[i], r = input.rect, point = [p[0] + ((r[0] + r[2]) / 2 - a[0]) * s[0] / 100, p[1] + ((r[1] + r[3]) / 2 - a[1]) * s[1] / 100];
+            var zoom = [(r[2] - r[0]) / width * s[0], (r[3] - r[1]) / height * s[1]];
+            if (position.valueAtZero.length === 3) { point.push(0); }
+            if (scale.valueAtZero.length === 3) { zoom.push(100); }
+            expected.push({frame: input.frame, position: point, scale: zoom, slow: input.slow === true});
+            var fields = [{info: position, value: point, name: "Position"}, {info: scale, value: zoom, name: "Scale"}];
+            for (var n = 0; n < fields.length; n++) {
+                var actual = fields[n].info.keys[i], interpolation = input.slow ? "BEZIER" : "LINEAR";
+                var ok = !!actual && V.near(actual.time, (input.frame - 1) / plan.fps) && V.vector(actual.value, fields[n].value) &&
+                    actual.inType === interpolation && actual.outType === interpolation;
+                if (actual && input.slow) {
+                    var eases = (actual.inEase || []).concat(actual.outEase || []);
+                    if (!eases.length || i === 0) { ok = false; }
+                    for (var e = 0; e < eases.length; e++) { if (!V.near(eases[e].speed, 0) || !V.near(eases[e].influence, 33.333333)) { ok = false; } }
+                }
+                if (actual && n === 0) {
+                    var tangents = (actual.inTangent || []).concat(actual.outTangent || []);
+                    if (!tangents.length || actual.roving || actual.spatialAutoBezier) { ok = false; }
+                    for (var t = 0; t < tangents.length; t++) { if (!V.near(tangents[t], 0)) { ok = false; } }
+                }
+                check("camera." + fields[n].name + ".key" + (i + 1), ok, actual, {frame: input.frame, value: fields[n].value, interpolation: interpolation});
+            }
+        }
+        report.camera.expected = expected;
+        var beforeOther = V.safe(baseline.camera), afterOther = V.safe(current);
+        delete beforeOther.transform["ADBE Position"]; delete beforeOther.transform["ADBE Scale"];
+        delete afterOther.transform["ADBE Position"]; delete afterOther.transform["ADBE Scale"];
+        check("camera.otherRigSettingsPreserved", V.same(beforeOther, afterOther), afterOther, beforeOther);
+    }
+    try {
+        if (!app.project || !app.project.file) { throw new Error("Open the saved scene project first."); }
+        var currentFile = app.project.file, match = /^DEMO_SC(\d+)$/i.exec(currentFile.parent.name);
+        if (!match) { throw new Error("Expected a numbered scene folder."); }
+        tag = "SC" + match[1];
+        var expectedFile = file(cfg.project);
+        report.project = currentFile.fsName;
+        if (!check("project.exactPath", V.path(currentFile) === V.path(expectedFile), currentFile.fsName, expectedFile.fsName)) { throw new Error("Wrong opened scene project."); }
+        check("project.savedAndClean", expectedFile.exists && expectedFile.length > 0 && app.project.dirty === false, {bytes: expectedFile.length, dirty: app.project.dirty});
+        var data = V.read(file(cfg.timesheet)), baseline = V.read(file(cfg.baseline || tag + ".baseline.json"));
+        var fps = data.sheet_fps, frames = data.duration.total_frames, seconds = frames / fps;
+        check("data.sceneAndDuration", parseInt(data.cut_number, 10) === parseInt(match[1], 10) && integer(frames) && frames > 0 && V.near(fps, 24),
+            {cut: data.cut_number, frames: frames, fps: fps});
+        check("data.noUnresolvedItems", !data.uncertain_items || data.uncertain_items.length === 0, data.uncertain_items || [], []);
+        check("baseline.sameProject", V.path(baseline.project) === V.path(currentFile), baseline.project, currentFile.fsName);
+        var stage = V.comp("01_Comp stage"), main = V.comp(currentFile.parent.name + ".tk1");
+        var target = cfg.canvas, dx = (target[0]-baseline.topology.stage.width)/2, dy = (target[1]-baseline.topology.stage.height)/2;
+        function shift(info) {
+            var p = info.transform["ADBE Position"];
+            p.valueAtZero[0]+=dx;p.valueAtZero[1]+=dy;
+            for(var k=0;k<p.keys.length;k++){p.keys[k].value[0]+=dx;p.keys[k].value[1]+=dy;}
+        }
+        if (!baseline.camera.parent) { shift(baseline.camera); }
+        for(var b=0;b<baseline.blur.length;b++){if(!baseline.blur[b].parent){shift(baseline.blur[b]);}}
+        // AE rebases a source-centred, unkeyed raw anchor when its source comp
+        // is resized. The enabled inverse-camera expression remains authoritative.
+        // Permit only this exact centre translation; compare every other field.
+        for(var w=0;w<baseline.topology.output_stage_wrappers.length;w++){
+            var anchor=baseline.topology.output_stage_wrappers[w].transformPreExpression["ADBE Anchor Point"];
+            if(anchor.expressionEnabled && anchor.expression==='source.layer("camera").position' &&
+                    !anchor.keys.length && !anchor.dimensionsSeparated &&
+                    V.near(anchor.valueAtZero[0],baseline.topology.stage.width/2) &&
+                    V.near(anchor.valueAtZero[1],baseline.topology.stage.height/2)){
+                anchor.valueAtZero[0]+=dx;anchor.valueAtZero[1]+=dy;
+            }
+        }
+        baseline.topology.stage.width=target[0];baseline.topology.stage.height=target[1];
+        duration("stage", stage, frames, fps); duration("main", main, frames, fps);
+        report.topology = V.topology(stage, main);
+        check("topology.stageDimensionsPreserved", !!baseline.topology && V.same(report.topology.stage, baseline.topology.stage), report.topology.stage, baseline.topology ? baseline.topology.stage : null);
+        check("topology.renamedTopDimensionsPreserved", !!baseline.topology && V.same(report.topology.top, baseline.topology.top), report.topology.top, baseline.topology ? baseline.topology.top : null);
+        check("topology.outputDimensionsPreserved", !!baseline.topology && V.same(report.topology.output, baseline.topology.output), report.topology.output, baseline.topology ? baseline.topology.output : null);
+        check("topology.outputStageWrapperPreserved", !!baseline.topology && V.same(report.topology.output_stage_wrappers, baseline.topology.output_stage_wrappers), report.topology.output_stage_wrappers, baseline.topology ? baseline.topology.output_stage_wrappers : null);
+        report.stage_order = V.order(stage);
+        var dataComps = [];
+        for (var i = 1; i <= app.project.numItems; i++) { var item = app.project.item(i); if (item instanceof CompItem && item.name.toLowerCase() === "ae_remap_data") { dataComps.push(item.name); } }
+        check("project.noAeRemapData", dataComps.length === 0, dataComps, []);
+        var sequences = cfg.source_sequences || {}, exclusions = cfg.excluded_tracks || {}, mapped = [], seen = {};
+        for (var trackIndex = 0; trackIndex < data.tracks.length; trackIndex++) {
+            var track = data.tracks[trackIndex], sequence = sequences[track.caption];
+            if (!track.events.length) { continue; }
+            if (!sequence) {
+                check("track." + track.caption + ".explicitExclusion", typeof exclusions[track.caption] === "string" && exclusions[track.caption].length > 0, exclusions[track.caption]);
+                var excludedLayerCount = 0;
+                for (var excludedIndex = 1; excludedIndex <= stage.numLayers; excludedIndex++) { if (stage.layer(excludedIndex).name === track.caption) { excludedLayerCount++; } }
+                check("track." + track.caption + ".excludedNotActuallyMapped", excludedLayerCount === 0, excludedLayerCount, 0);
+                report.excluded_tracks.push({caption: track.caption, reason: exclusions[track.caption] || "MISSING MAPPING DECISION"});
+                continue;
+            }
+            seen[track.caption] = true;
+            inspect("track." + track.caption, function () {
+                var id = "track." + track.caption, wrapper = V.layer(stage, track.caption);
+                mapped.push({caption: track.caption, index: wrapper.index});
+                if (!check(id + ".cellPrecomp", wrapper.source instanceof CompItem && wrapper.source.name === track.caption)) { throw new Error("Expected cell precomp."); }
+                check(id+".commonCanvas", wrapper.source.width===cfg.canvas[0] && wrapper.source.height===cfg.canvas[1], [wrapper.source.width,wrapper.source.height],cfg.canvas);
+                duration(id, wrapper.source, frames, fps); span(id + ".wrapper", wrapper, seconds); opacity100(id + ".wrapper", wrapper, frames, fps);
+                var leaf = AETimesheetCore.resolveLeafLayer(wrapper, track.caption);
+                if (!leaf || leaf === wrapper || !(leaf.source instanceof FootageItem)) { throw new Error("Ambiguous footage leaf."); }
+                var footage = leaf.source, rate = footage.frameRate, capacity = footage.duration * rate;
+                check(id+".sourceDimensions", footage.width===sequence.width && footage.height===sequence.height,[footage.width,footage.height],[sequence.width,sequence.height]);
+                check(id+".sourceScale",V.vector(leaf.property("ADBE Transform Group").property("ADBE Scale").valueAtTime(0,false),[100,100,100]) || V.vector(leaf.property("ADBE Transform Group").property("ADBE Scale").valueAtTime(0,false),[100,100]));
+                var info = {caption: track.caption, wrapperIndex: wrapper.index, sourceFile: footage.file ? footage.file.fsName : null,
+                    fps: rate, sourceFrames: capacity, expected_files: [], samples: [], identity_evidence: sequence.identity_evidence || null};
+                report.tracks.push(info); span(id + ".leaf", leaf, seconds);
+                check(id + ".exactSource", footage.file && V.path(footage.file) === V.path(file(sequence.first_file)), info.sourceFile, sequence.first_file);
+                check(id + ".sequenceCoverage", integer(sequence.frame_count) && sequence.frame_count > 0 && V.near(rate, fps) &&
+                    V.near(capacity, sequence.frame_count) && footage.mainSource.isStill === false,
+                    {fps: rate, frames: capacity, isStill: footage.mainSource.isStill}, {fps: fps, frames: sequence.frame_count, isStill: false});
+                var files = sequence.files || [], unique = {}, digitWidth = null, filenameRisk = !!sequence.irregular_names;
+                check(id + ".explicitFileListCount", files.length === sequence.frame_count, files.length, sequence.frame_count);
+                for (var f = 0; f < files.length; f++) {
+                    var inputFile = file(files[f]), identity = V.path(inputFile), present = inputFile.exists && inputFile.length > 0 && !unique[identity];
+                    unique[identity] = true; info.expected_files.push({file: inputFile.fsName, exists: inputFile.exists, bytes: inputFile.length});
+                    check(id + ".input" + (f + 1), present, info.expected_files[info.expected_files.length - 1]);
+                    var number = String(inputFile.name).match(/(\d+)\.[^.]+$/);
+                    if (!number || parseInt(number[1], 10) !== f + 1) { filenameRisk = true; }
+                    if (number) {
+                        if (digitWidth === null) { digitWidth = number[1].length; }
+                        else if (digitWidth !== number[1].length) { filenameRisk = true; }
+                    }
+                }
+                info.filename_identity_risk = filenameRisk;
+                if (files.length) { check(id + ".firstFileMatchesList", V.path(file(files[0])) === V.path(file(sequence.first_file))); }
+                if (filenameRisk && !sequence.identity_evidence) { check(id + ".irregularSourceIdentityEvidenceRequired", false, sequence); }
+                if (!sequence.identity_evidence) { report.warnings.push(id + ": sequence content identity is not independently proven by metadata checks."); }
+                if (!check(id + ".reviewEventsValidAndCovered", validTrack(track, frames, sequence.frame_count, sequence.source_frame_by_number), track.events)) { throw new Error("Invalid or uncovered reviewed events."); }
+                var keyEffects = V.effectsByMatch(leaf, "ADBE Color Key");
+                check(id + ".oneColorKey", keyEffects.length === 1, keyEffects.length, 1);
+                if (keyEffects.length) { var color = keyEffects[0].property(1).value; check(id + ".whiteColorKey", keyEffects[0].enabled && V.near(color[0], 1) && V.near(color[1], 1) && V.near(color[2], 1), color); }
+                var remap = leaf.property("ADBE Time Remapping"), opacity = leaf.property("ADBE Transform Group").property("ADBE Opacity"), hasEmpty = false;
+                check(id + ".enabled", wrapper.enabled && leaf.enabled && leaf.timeRemapEnabled);
+                check(id + ".noOverrideExpressions", !remap.expressionEnabled && !opacity.expressionEnabled);
+                info.remap = V.prop(remap); info.opacity = V.prop(opacity);
+                for (var e = 0; e < track.events.length; e++) { if (track.events[e].type === "empty") { hasEmpty = true; } }
+                check(id + ".exactRemapCount", remap.numKeys === track.events.length, remap.numKeys, track.events.length);
+                check(id + ".opacityKeyCount", opacity.numKeys === (hasEmpty ? track.events.length : 0), opacity.numKeys, hasEmpty ? track.events.length : 0);
+                for (e = 0; e < track.events.length; e++) {
+                    var event = track.events[e], time = (event.sheet_frame - 1) / fps, expectedTime = event.type === "empty" ? 0 : sourceFrame(event.cell_number, sequence.source_frame_by_number) / rate;
+                    check(id + ".remapKey" + (e + 1), keyMatches(remap, e + 1, time, expectedTime), info.remap.keys[e], event);
+                    if (hasEmpty) { check(id + ".opacityKey" + (e + 1), keyMatches(opacity, e + 1, time, event.type === "empty" ? 0 : 100), info.opacity.keys[e], event); }
+                }
+                var active = 0, failedFrames = [];
+                for (f = 1; f <= frames; f++) {
+                    while (active + 1 < track.events.length && track.events[active + 1].sheet_frame <= f) { active++; }
+                    var expected = track.events[active], observedTime = remap.valueAtTime((f - 1) / fps, false), observedOpacity = opacity.valueAtTime((f - 1) / fps, false);
+                    var expectedOpacity = expected.type === "empty" ? 0 : 100, expectedSource = expected.type === "empty" ? 0 : sourceFrame(expected.cell_number, sequence.source_frame_by_number) / rate;
+                    info.samples.push({frame: f, cell: expected.type === "empty" ? null : expected.cell_number, sourceTime: observedTime, opacity: observedOpacity});
+                    if (!V.near(observedTime, expectedSource) || !V.near(observedOpacity, expectedOpacity)) { failedFrames.push(f); }
+                }
+                check(id + ".allFrameHoldAndOpacity", failedFrames.length === 0, failedFrames, []);
+            });
+        }
+        for (var caption in sequences) { if (Object.prototype.hasOwnProperty.call(sequences, caption)) { check("mapping." + caption + ".reviewedTrackPresent", seen[caption] === true); } }
+        mapped.sort(function (a, b) { return a.index - b.index; });
+        var actualCaptions = [], desired = [];
+        for (i = 0; i < mapped.length; i++) { actualCaptions.push(mapped[i].caption); desired.push(mapped[i].caption); }
+        desired.sort(); desired.reverse(); check("order.allMappedCellsDescending", V.same(actualCaptions, desired), actualCaptions, desired);
+        var layoutFiles = V.layouts(currentFile.parent), layoutPaths = {}, firstLayoutIndex = stage.numLayers - layoutFiles.length + 1;
+        for (i = 0; i < layoutFiles.length; i++) {
+            var image = layoutFiles[i], target = V.path(image); layoutPaths[target] = true;
+            inspect("layout." + image.name, function () {
+                var footageMatches = [], layerMatches = [];
+                for (var p = 1; p <= app.project.numItems; p++) { var it = app.project.item(p); if (it instanceof FootageItem && it.file && V.path(it.file) === target) { footageMatches.push(it); } }
+                for (var l = 1; l <= stage.numLayers; l++) { var ly = stage.layer(l); if (ly.source instanceof FootageItem && ly.source.file && V.path(ly.source.file) === target) { layerMatches.push(ly); } }
+                var id = "layout." + image.name, info = {file: image.fsName, footageCount: footageMatches.length, layerCount: layerMatches.length}; report.layout.push(info);
+                if (!check(id + ".unique", footageMatches.length === 1 && layerMatches.length === 1, info)) { return; }
+                var footage = footageMatches[0], layer = layerMatches[0]; info.index = layer.index;
+                check(id + ".stillIn01LO", footage.mainSource.isStill && footage.parentFolder.name === "01_LO");
+                check(id + ".absoluteBottomNaturalOrder", layer.index === firstLayoutIndex + i, layer.index, firstLayoutIndex + i);
+                span(id, layer, seconds); check(id + ".noCellKeyOrRemap", !layer.timeRemapEnabled && V.effectsByMatch(layer, "ADBE Color Key").length === 0);
+            });
+        }
+        if (!layoutFiles.length) { report.warnings.push("No direct LO images found."); }
+        var currentBlur = V.blur(stage); report.blur = {baseline: baseline.blur, current: currentBlur};
+        check("blur.originalSettingsPreserved", V.same(currentBlur, baseline.blur), currentBlur, baseline.blur);
+        for (i = 1; i <= stage.numLayers; i++) {
+            var blur = stage.layer(i); if (!V.isBlur(blur)) { continue; }
+            for (var c = 0; c < mapped.length; c++) { check("order." + mapped[c].caption + ".aboveBlur" + i, mapped[c].index < i, mapped[c].index, "< " + i); }
+            if (layoutFiles.length) { check("order.blur" + i + ".aboveLO", i < firstLayoutIndex, i, "< " + firstLayoutIndex); }
+        }
+        var mappedNames = {}, beforeNoncells = [], afterNoncells = [];
+        for (i = 0; i < mapped.length; i++) { mappedNames[mapped[i].caption] = true; }
+        var orders = [baseline.stage_order, report.stage_order], filtered = [beforeNoncells, afterNoncells];
+        for (var side = 0; side < 2; side++) {
+            for (i = 0; i < orders[side].length; i++) {
+                var entry = orders[side][i];
+                if (!mappedNames[entry.name] && !layoutPaths[V.path(entry.sourceFile)]) { filtered[side].push(entry.name); }
+            }
+        }
+        check("order.noncellRelativeOrderPreserved", V.same(beforeNoncells, afterNoncells), afterNoncells, beforeNoncells);
+        inspect("camera", function () { verifyCamera(stage, cfg, baseline, data); });
+        check("project.stillClean", app.project.dirty === false, app.project.dirty, false);
+    } catch (fatal) { check("fatal", false, fatal.toString() + (fatal.line ? " line=" + fatal.line : "")); }
+    report.ok = report.errors.length === 0;
+    V.write(new File(cfg.verify_report), report);
+    return report;
+};

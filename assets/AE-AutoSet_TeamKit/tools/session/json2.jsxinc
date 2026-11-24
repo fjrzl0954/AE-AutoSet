@@ -1,0 +1,25 @@
+/* Minimal JSON fallback for legacy ExtendScript hosts. Modern AE uses the native JSON object. */
+if (typeof JSON === "undefined") { JSON = {}; }
+if (typeof JSON.parse !== "function") {
+    JSON.parse = function (text) { return eval("(" + text + ")"); };
+}
+if (typeof JSON.stringify !== "function") {
+    JSON.stringify = function (value) {
+        function quote(text) { return '"' + String(text).replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\r/g, "\\r").replace(/\n/g, "\\n") + '"'; }
+        function encode(item) {
+            var i, parts;
+            if (item === null) { return "null"; }
+            if (typeof item === "string") { return quote(item); }
+            if (typeof item === "number" || typeof item === "boolean") { return String(item); }
+            if (item instanceof Array) {
+                parts = [];
+                for (i = 0; i < item.length; i++) { parts.push(encode(item[i])); }
+                return "[" + parts.join(",") + "]";
+            }
+            parts = [];
+            for (i in item) { if (item.hasOwnProperty(i)) { parts.push(quote(i) + ":" + encode(item[i])); } }
+            return "{" + parts.join(",") + "}";
+        }
+        return encode(value);
+    };
+}

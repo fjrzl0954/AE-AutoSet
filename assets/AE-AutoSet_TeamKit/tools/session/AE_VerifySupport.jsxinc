@@ -1,0 +1,180 @@
+/* Read-only scene verification primitives. */
+var TaskVerification = (function () {
+    function safe(v) {
+        if (v === undefined || typeof v === "function") { return null; }
+        if (v === null || typeof v !== "object") { return v; }
+        var out, k;
+        if (Object.prototype.toString.call(v) === "[object Array]") {
+            out = []; for (k = 0; k < v.length; k++) { out.push(safe(v[k])); }
+        } else {
+            out = {}; for (k in v) { if (Object.prototype.hasOwnProperty.call(v, k)) { out[k] = safe(v[k]); } }
+        }
+        return out;
+    }
+    function read(file) {
+        if (!(file instanceof File)) { file = new File(file); }
+        file.encoding = "UTF-8";
+        if (!file.exists || !file.open("r")) { throw new Error("Cannot read " + file.fsName); }
+        var value;
+        try { value = file.read(); } finally { file.close(); }
+        if (value.charCodeAt(0) === 0xFEFF) { value = value.substring(1); }
+        return JSON.parse(value);
+    }
+    function write(file, value) {
+        if (!(file instanceof File)) { file = new File(file); }
+        file.encoding = "UTF-8";
+        if (!file.open("w")) { throw new Error("Cannot write verification report " + file.fsName); }
+        try { if (!file.write(JSON.stringify(safe(value), null, 2))) { throw new Error("Incomplete verification report " + file.fsName); } }
+        finally { file.close(); }
+    }
+    function path(v) { return String(v && v.fsName ? v.fsName : v || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase(); }
+    function near(a, b) { return typeof a === "number" && typeof b === "number" && isFinite(a) && isFinite(b) && Math.abs(a - b) < 0.00001; }
+    function same(a, b) {
+        if (typeof a === "number" && typeof b === "number") { return Math.abs(a-b) <= 0.0001 + Math.max(Math.abs(a), Math.abs(b))*0.0000001; }
+        if (a === b) { return true; }
+        if (!a || !b || typeof a !== "object" || typeof b !== "object") { return false; }
+        var ka=[],kb=[],k;
+        for(k in a){if(Object.prototype.hasOwnProperty.call(a,k)){ka.push(k);}}
+        for(k in b){if(Object.prototype.hasOwnProperty.call(b,k)){kb.push(k);}}
+        ka.sort();kb.sort();if(JSON.stringify(ka)!==JSON.stringify(kb)){return false;}
+        for(k=0;k<ka.length;k++){if(!same(a[ka[k]],b[ka[k]])){return false;}}return true;
+    }
+    function vector(a, b) {
+        if (!a || !b || a.length !== b.length) { return false; }
+        for (var i = 0; i < a.length; i++) { if (!near(a[i], b[i])) { return false; } }
+        return true;
+    }
+    function comp(name) {
+        var found = [];
+        for (var i = 1; i <= app.project.numItems; i++) {
+            var item = app.project.item(i);
+            if (item instanceof CompItem && item.name === name) { found.push(item); }
+        }
+        if (found.length !== 1) { throw new Error("Expected one comp: " + name + ", got " + found.length); }
+        return found[0];
+    }
+    function layer(comp, name) {
+        var found = [];
+        for (var i = 1; i <= comp.numLayers; i++) { if (comp.layer(i).name === name) { found.push(comp.layer(i)); } }
+        if (found.length !== 1) { throw new Error("Expected one layer: " + comp.name + "/" + name + ", got " + found.length); }
+        return found[0];
+    }
+    function mode(v) {
+        if (v === KeyframeInterpolationType.HOLD) { return "HOLD"; }
+        if (v === KeyframeInterpolationType.LINEAR) { return "LINEAR"; }
+        if (v === KeyframeInterpolationType.BEZIER) { return "BEZIER"; }
+        return String(v);
+    }
+    function ease(array) {
+        var result = [];
+        for (var i = 0; i < array.length; i++) { result.push({speed: array[i].speed, influence: array[i].influence}); }
+        return result;
+    }
+    function prop(prop, preExpression) {
+        var result = {name: prop.name, matchName: prop.matchName, valueAtZero: prop.valueAtTime(0, !!preExpression),
+            expression: prop.expression || "", expressionEnabled: !!prop.expressionEnabled,
+            dimensionsSeparated: !!prop.dimensionsSeparated, keys: []};
+        for (var i = 1; i <= prop.numKeys; i++) {
+            var key = {time: prop.keyTime(i), value: prop.keyValue(i),
+                inType: mode(prop.keyInInterpolationType(i)), outType: mode(prop.keyOutInterpolationType(i))};
+            try {
+                key.inEase = ease(prop.keyInTemporalEase(i)); key.outEase = ease(prop.keyOutTemporalEase(i));
+                key.temporalAutoBezier = prop.keyTemporalAutoBezier(i); key.temporalContinuous = prop.keyTemporalContinuous(i);
+            } catch (ignored) {}
+            if (prop.isSpatial) {
+                key.inTangent = prop.keyInSpatialTangent(i); key.outTangent = prop.keyOutSpatialTangent(i);
+                key.spatialAutoBezier = prop.keySpatialAutoBezier(i); key.roving = prop.keyRoving(i);
+            }
+            result.keys.push(key);
+        }
+        return safe(result);
+    }
+    function transform(layer, preExpression) {
+        var group = layer.property("ADBE Transform Group"), names = ["ADBE Position", "ADBE Scale", "ADBE Anchor Point", "ADBE Rotate Z", "ADBE Opacity"], out = {};
+        for (var i = 0; i < names.length; i++) { out[names[i]] = prop(group.property(names[i]), preExpression); }
+        return out;
+    }
+    function effects(layer) {
+        var group = layer.property("ADBE Effect Parade"), out = [];
+        for (var i = 1; group && i <= group.numProperties; i++) {
+            var effect = group.property(i), values = [];
+            for (var j = 1; j <= effect.numProperties; j++) {
+                var item = effect.property(j), value = null;
+                try { value = item.value; } catch (ignored) {}
+                values.push({name: item.name, matchName: item.matchName, value: safe(value)});
+            }
+            out.push({name: effect.name, matchName: effect.matchName, enabled: effect.enabled, properties: values});
+        }
+        return safe(out);
+    }
+    function effectsByMatch(layer, name) {
+        var group = layer.property("ADBE Effect Parade"), result = [];
+        for (var i = 1; group && i <= group.numProperties; i++) { if (group.property(i).matchName === name) { result.push(group.property(i)); } }
+        return result;
+    }
+    function isBlur(layer) { return String(layer.name).replace(/^\s+|\s+$/g, "").replace(/\s+/g, " ").toLowerCase() === "camera lens blur"; }
+    function blur(stage) {
+        var result = [];
+        for (var i = 1; i <= stage.numLayers; i++) {
+            var value = stage.layer(i);
+            if (isBlur(value)) { result.push({name: value.name, enabled: value.enabled, locked: value.locked, parent: value.parent ? value.parent.name : null, effects: effects(value), transform: transform(value)}); }
+        }
+        return result;
+    }
+    function order(stage) {
+        var result = [];
+        for (var i = 1; i <= stage.numLayers; i++) {
+            var value = stage.layer(i);
+            result.push({index: i, name: value.name, sourceName: value.source ? value.source.name : null,
+                sourceFile: value.source instanceof FootageItem && value.source.file ? value.source.file.fsName : null});
+        }
+        return result;
+    }
+    function camera(stage) {
+        var value = layer(stage, "camera");
+        return {name: value.name, parent: value.parent ? value.parent.name : null, threeDLayer: value.threeDLayer,
+            enabled: value.enabled, locked: value.locked, transform: transform(value), effects: effects(value)};
+    }
+    function dimensions(comp) {
+        return {width: comp.width, height: comp.height, pixelAspect: comp.pixelAspect, frameRate: comp.frameRate};
+    }
+    function topology(stage, top) {
+        var output = comp("02_camera"), wrappers = [];
+        for (var i = 1; i <= output.numLayers; i++) {
+            var value = output.layer(i);
+            if (value.source === stage) {
+                wrappers.push({name: value.name, index: value.index, sourceName: value.source.name,
+                    parent: value.parent ? value.parent.name : null, threeDLayer: value.threeDLayer,
+                    enabled: value.enabled, locked: value.locked, startTime: value.startTime,
+                    inPoint: value.inPoint, stretch: value.stretch, transformPreExpression: transform(value, true), effects: effects(value)});
+            }
+        }
+        if (!wrappers.length) { throw new Error("02_camera has no stage wrapper."); }
+        return {stage: dimensions(stage), top: dimensions(top), output: dimensions(output), output_stage_wrappers: wrappers};
+    }
+    function natural(left, right) {
+        var aa = left.name.toLowerCase().match(/\d+|\D+/g) || [], bb = right.name.toLowerCase().match(/\d+|\D+/g) || [];
+        for (var i = 0; i < aa.length && i < bb.length; i++) {
+            if (aa[i] === bb[i]) { continue; }
+            if (/^\d+$/.test(aa[i]) && /^\d+$/.test(bb[i])) {
+                var difference = parseInt(aa[i], 10) - parseInt(bb[i], 10);
+                if (difference) { return difference; }
+                continue;
+            }
+            return aa[i] < bb[i] ? -1 : 1;
+        }
+        if (aa.length !== bb.length) { return aa.length - bb.length; }
+        return left.name < right.name ? -1 : (left.name > right.name ? 1 : 0);
+    }
+    function layouts(scene) {
+        var folders = scene.getFiles(function (item) { return item instanceof Folder && item.name.toLowerCase() === "lo"; });
+        if (!folders.length) { return []; }
+        if (folders.length !== 1) { throw new Error("Ambiguous LO folder"); }
+        var files = folders[0].getFiles(function (item) { return item instanceof File && /\.(tga|png|jpg|jpeg|tif|tiff|bmp|psd)$/i.test(item.name); });
+        files.sort(natural); return files;
+    }
+    return {safe: safe, read: read, write: write, path: path, near: near, same: same, vector: vector,
+        comp: comp, layer: layer, prop: prop, transform: transform, effects: effects, effectsByMatch: effectsByMatch,
+        isBlur: isBlur, blur: blur, order: order, camera: camera, topology: topology, natural: natural, layouts: layouts};
+}());
+

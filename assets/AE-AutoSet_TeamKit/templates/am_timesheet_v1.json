@@ -1,0 +1,17 @@
+{
+  "profile_id": "am_timesheet_v1",
+  "description": "NAMU 2338x3307 6-second animation timesheet",
+  "normalized_size": [2338, 3307],
+  "header_regions": {
+    "cut": [0.4149, 0.0278, 0.4808, 0.0587],
+    "second": [0.4808, 0.0278, 0.6454, 0.0587],
+    "sheet": [0.7481, 0.0278, 0.8417, 0.0587]
+  },
+  "cell_tracks": ["A", "B", "C", "D", "E", "F"],
+  "cell_blocks": [
+    {"box": [0.2134, 0.2277, 0.3567, 0.9688], "frame_start": 1, "row_count": 72},
+    {"box": [0.6843, 0.2277, 0.8279, 0.9688], "frame_start": 73, "row_count": 72}
+  ],
+  "max_frames_per_sheet": 144,
+  "minimum_alignment_confidence": 0.9
+}

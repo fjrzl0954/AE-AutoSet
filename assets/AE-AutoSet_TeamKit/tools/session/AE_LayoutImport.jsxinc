@@ -1,0 +1,180 @@
+﻿/* Shared LO import for the batch runner and the interactive panel. */
+var AETimesheetLayout = (function () {
+    var IMAGE_PATTERN = /\.(tga|png|jpg|jpeg|tif|tiff|bmp|psd)$/i;
+
+    function sourcePath(file) {
+        return file ? String(file.fsName).replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase() : "";
+    }
+    function naturalCompare(left, right) {
+        var a = String(left.name).toLowerCase(), b = String(right.name).toLowerCase();
+        var aa = a.match(/\d+|\D+/g) || [], bb = b.match(/\d+|\D+/g) || [];
+        for (var i = 0; i < aa.length && i < bb.length; i++) {
+            if (aa[i] === bb[i]) { continue; }
+            if (/^\d+$/.test(aa[i]) && /^\d+$/.test(bb[i])) {
+                var numeric = parseInt(aa[i], 10) - parseInt(bb[i], 10);
+                if (numeric) { return numeric; }
+                continue;
+            }
+            return aa[i] < bb[i] ? -1 : 1;
+        }
+        if (aa.length !== bb.length) { return aa.length - bb.length; }
+        var rawA = String(left.name), rawB = String(right.name);
+        return rawA < rawB ? -1 : (rawA > rawB ? 1 : 0);
+    }
+    function discover(sceneFolder, sourceFolderName) {
+        var root = new Folder(sceneFolder);
+        sourceFolderName = sourceFolderName || "LO";
+        var result = {sceneFolder: root.fsName, sourceFolder: root.fsName + "/" + sourceFolderName, status: "missing", files: []};
+        if (!root.exists) { return result; }
+        var folders = root.getFiles(function (entry) {
+            return entry instanceof Folder && String(entry.name).toLowerCase() === String(sourceFolderName).toLowerCase();
+        });
+        if (!folders.length) { return result; }
+        result.sourceFolder = folders[0].fsName;
+        result.files = folders[0].getFiles(function (entry) {
+            return entry instanceof File && IMAGE_PATTERN.test(entry.name);
+        });
+        result.files.sort(naturalCompare);
+        result.status = result.files.length ? "ready" : "empty";
+        return result;
+    }
+    function findOrCreateProjectFolder(name) {
+        name = name || "01_LO";
+        for (var i = 1; i <= app.project.numItems; i++) {
+            var item = app.project.item(i);
+            if (item instanceof FolderItem && item.name === name) { return item; }
+        }
+        return app.project.items.addFolder(name);
+    }
+    function isMatchingStill(item, file) {
+        return item instanceof FootageItem && !!item.file && !!item.mainSource && item.mainSource.isStill === true && sourcePath(item.file) === sourcePath(file);
+    }
+    function findFootage(file) {
+        for (var i = 1; i <= app.project.numItems; i++) {
+            var item = app.project.item(i);
+            if (isMatchingStill(item, file)) { return item; }
+        }
+        return null;
+    }
+    function findLayer(comp, file) {
+        for (var i = 1; i <= comp.numLayers; i++) {
+            var layer = comp.layer(i);
+            if (isMatchingStill(layer.source, file)) { return layer; }
+        }
+        return null;
+    }
+    function importStill(file) {
+        var options = new ImportOptions(file);
+        options.sequence = false;
+        options.forceAlphabetical = false;
+        if (options.canImportAs(ImportAsType.FOOTAGE)) { options.importAs = ImportAsType.FOOTAGE; }
+        var footage = app.project.importFile(options);
+        if (!isMatchingStill(footage, file)) { throw new Error("LO 이미지를 단일 스틸로 가져오지 못했습니다: " + file.fsName); }
+        return footage;
+    }
+    function fitAndMoveToBottom(layer, durationSeconds) {
+        var wasLocked = layer.locked;
+        try {
+            layer.locked = false;
+            layer.startTime = 0;
+            layer.inPoint = 0;
+            layer.outPoint = durationSeconds;
+            layer.moveToEnd();
+        } finally { layer.locked = wasLocked; }
+    }
+    function preparedEntries(found, prepared) {
+        var result = [], i, item;
+        if (prepared && prepared.items && typeof prepared.items.length === "number") {
+            for (i = 0; i < prepared.items.length; i++) {
+                item = prepared.items[i];
+                if (!item || !item.source) { continue; }
+                result.push({original: new File(item.source), rgbCopy: item.rgb_copy ? new File(item.rgb_copy) : null,
+                    rgbCopyStatus: item.rgb_copy_status || "missing", rgbCopyError: item.error || ""});
+            }
+            return result;
+        }
+        for (i = 0; i < found.files.length; i++) {
+            result.push({original: found.files[i], rgbCopy: null, rgbCopyStatus: "not_prepared", rgbCopyError: ""});
+        }
+        return result;
+    }
+    function importWithFallback(entry) {
+        var errors = [], footage = null, used = null;
+        if (entry.original.exists) {
+            try { footage = importStill(entry.original); used = entry.original; }
+            catch (originalError) { errors.push("원본: " + String(originalError)); }
+        } else { errors.push("원본 파일 없음: " + entry.original.fsName); }
+        if (!footage && entry.rgbCopy && entry.rgbCopy.exists) {
+            try { footage = importStill(entry.rgbCopy); used = entry.rgbCopy; }
+            catch (copyError) { errors.push("RGB 복사본: " + String(copyError)); }
+        } else if (!footage && entry.rgbCopyStatus === "failed") {
+            errors.push("RGB 복사본 생성 실패: " + entry.rgbCopyError);
+        }
+        return {footage: footage, used: used, errors: errors};
+    }
+    function apply(comp, sceneFolder, durationSeconds, prepared, options) {
+        options = options || {};
+        if (!(durationSeconds > 0) || !isFinite(durationSeconds)) { throw new Error("LO 레이어 길이가 올바르지 않습니다."); }
+        var found = discover(sceneFolder, options.sourceFolderName || "LO");
+        var result = {
+            status: found.status, sceneFolder: found.sceneFolder, sourceFolder: found.sourceFolder,
+            imported: [], reused: [], addedLayers: [], reusedLayers: [], layers: [], layerOrderTopToBottom: [],
+            skipped: [], sourceMappings: [], warnings: [], message: ""
+        };
+        var entries = preparedEntries(found, prepared);
+        if (prepared && prepared.source_folder) { result.sourceFolder = prepared.source_folder; }
+        if (!entries.length) {
+            result.status = prepared && prepared.status ? prepared.status : found.status;
+            result.message = result.status === "missing" ? "LO 폴더 없음: 레이아웃 없이 진행" : "LO 이미지 없음: 레이아웃 없이 진행";
+            return result;
+        }
+        entries.sort(function (left, right) { return naturalCompare(left.original, right.original); });
+        var folder = null, layers = [];
+        for (var i = 0; i < entries.length; i++) {
+            var entry = entries[i], file = entry.original, fallback = entry.rgbCopy;
+            var layer = findLayer(comp, file) || (fallback ? findLayer(comp, fallback) : null);
+            var footage = layer ? layer.source : (findFootage(file) || (fallback ? findFootage(fallback) : null));
+            var usedFile = footage && footage.file ? footage.file : null, attempted = null;
+            if (!footage) {
+                attempted = importWithFallback(entry); footage = attempted.footage; usedFile = attempted.used;
+                if (!footage) {
+                    var errorText = attempted.errors.join(" / ");
+                    result.skipped.push({sourceFile: file.fsName, rgbCopy: fallback ? fallback.fsName : "", error: errorText});
+                    result.warnings.push({kind: "lo_import_skipped", message: file.name + ": 원본·RGB 복사본 가져오기 실패로 LO 제외",
+                        source_file: file.fsName, rgb_copy: fallback ? fallback.fsName : "", error: errorText});
+                    continue;
+                }
+                result.imported.push(usedFile.fsName);
+                if (sourcePath(usedFile) !== sourcePath(file)) {
+                    result.warnings.push({kind: "lo_rgb_fallback", message: file.name + ": AE 원본 거부로 RGB 복사본 사용",
+                        source_file: file.fsName, rgb_copy: usedFile.fsName, error: attempted.errors.join(" / ")});
+                }
+            } else { result.reused.push(usedFile.fsName); }
+            if (!folder) { folder = findOrCreateProjectFolder(options.projectFolderName || "01_LO"); }
+            footage.parentFolder = folder;
+            if (!layer) {
+                layer = comp.layers.add(footage);
+                layer.name = file.name;
+                layer.comment = sourcePath(usedFile) === sourcePath(file) ? "AE Timesheet Auto / LO" : "AE Timesheet Auto / LO / RGB fallback";
+                result.addedLayers.push(usedFile.fsName);
+            } else { result.reusedLayers.push(usedFile.fsName); }
+            // Moving in natural order produces the same top-to-bottom order at the absolute bottom.
+            // Do not key, remap, precompose, rescale, or otherwise change the layout artwork.
+            fitAndMoveToBottom(layer, durationSeconds);
+            layers.push(layer);
+            result.sourceMappings.push({originalSource: file.fsName, importSource: usedFile.fsName,
+                rgbCopy: fallback ? fallback.fsName : "", usedRgbCopy: sourcePath(usedFile) !== sourcePath(file), layerName: layer.name});
+        }
+        for (i = 0; i < layers.length; i++) {
+            layer = layers[i];
+            result.layers.push({name: layer.name, sourceFile: layer.source.file.fsName, projectFolder: layer.source.parentFolder.name,
+                index: layer.index, inPoint: layer.inPoint, outPoint: layer.outPoint});
+            result.layerOrderTopToBottom.push(layer.name);
+        }
+        result.status = layers.length ? (result.skipped.length ? "applied_with_skips" : "applied") : "skipped_all";
+        result.message = layers.length ? "LO " + layers.length + "개 → " + (options.projectFolderName || "01_LO") + " / " + comp.name + " 최하단 (위→아래: " + result.layerOrderTopToBottom.join(", ") + ")" :
+            "LO 원본과 RGB 복사본을 모두 가져오지 못해 LO 없이 진행";
+        return result;
+    }
+    return {discover: discover, apply: apply, sourcePath: sourcePath};
+}());

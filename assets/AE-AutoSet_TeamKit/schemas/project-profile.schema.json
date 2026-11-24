@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AE AutoSet project profile v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "profile_version", "project_code", "template_aep", "scene_folder_pattern",
+    "output_aep", "output_ardj",
+    "cell_target_comp", "lo_target_comp", "lo_project_folder",
+    "main_comp_template", "main_comp_output", "camera_layer", "camera_target_comp",
+    "camera_output_comp", "fps"
+  ],
+  "properties": {
+    "profile_version": {"const": 1},
+    "project_code": {"type": "string", "minLength": 1},
+    "template_aep": {"type": "string", "pattern": "^[^/\\\\].*\\.aep$"},
+    "scene_folder_pattern": {"type": "string", "minLength": 1},
+    "output_aep": {"type": "string", "minLength": 1},
+    "output_ardj": {"type": "string", "minLength": 1},
+    "sheet_folder": {"type": "string", "minLength": 1},
+    "lo_source_folder": {"type": "string", "minLength": 1},
+    "cell_target_comp": {"type": "string", "minLength": 1},
+    "lo_target_comp": {"type": "string", "minLength": 1},
+    "lo_project_folder": {"type": "string", "minLength": 1},
+    "main_comp_template": {"type": "string", "minLength": 1},
+    "main_comp_output": {"type": "string", "minLength": 1},
+    "camera_layer": {"type": "string", "minLength": 1},
+    "camera_target_comp": {"type": "string", "minLength": 1},
+    "camera_output_comp": {"type": "string", "minLength": 1},
+    "fps": {"const": 24}
+  }
+}

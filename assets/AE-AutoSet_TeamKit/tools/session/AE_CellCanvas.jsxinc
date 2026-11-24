@@ -1,0 +1,331 @@
+﻿/*
+ * Cell-source-sized working canvases, with center-coordinate rebasing.
+ * ES3 / ExtendScript. The caller owns undo/save; a thrown write error must not be saved.
+ * inspect(project, stage, mapping) is read-only; apply(...) repeats all preflight checks.
+ */
+var AE_CellCanvas = (function () {
+    var EPS = 0.00001;
+    function fail(message) { throw new Error("Cell canvas: " + message); }
+    function pathKey(value) { return String(value || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase(); }
+    function own(object, key) { return Object.prototype.hasOwnProperty.call(object, key); }
+    function near(a, b) { return typeof a === "number" && typeof b === "number" && isFinite(a) && isFinite(b) && Math.abs(a - b) < EPS; }
+    function hasDelta(delta) { return !near(delta[0], 0) || !near(delta[1], 0); }
+    function vector(value, label) {
+        if (!value || (value.length !== 2 && value.length !== 3)) { fail("Expected a 2D/3D coordinate: " + label); }
+        var result = [];
+        for (var i = 0; i < value.length; i++) { if (typeof value[i] !== "number" || !isFinite(value[i])) { fail("Non-finite coordinate: " + label); } result.push(value[i]); }
+        return result;
+    }
+    function offset(value, delta) { var result = vector(value, "offset"); result[0] += delta[0]; result[1] += delta[1]; return result; }
+    function equalVector(a, b) {
+        if (!a || !b || a.length !== b.length) { return false; }
+        for (var i = 0; i < a.length; i++) { if (!near(a[i], b[i])) { return false; } }
+        return true;
+    }
+    function equalEffectPoint(a, b) {
+        if (!a || !b || a.length !== b.length) { return false; }
+        for (var i = 0; i < a.length; i++) {
+            if (typeof a[i] !== "number" || typeof b[i] !== "number" || !isFinite(a[i]) || !isFinite(b[i]) ||
+                    Math.abs(a[i] - b[i]) > 0.0001 + Math.max(Math.abs(a[i]), Math.abs(b[i])) * 0.0000001) { return false; }
+        }
+        return true;
+    }
+    function isEffectPoint(property) {
+        if (typeof PropertyValueType === "undefined") { fail("PropertyValueType is required to preserve effect coordinates."); }
+        var type = property.propertyValueType;
+        if (type === undefined || type === null) { return false; }
+        return type === PropertyValueType.TwoD_SPATIAL || type === PropertyValueType.TwoD ||
+            type === PropertyValueType.ThreeD_SPATIAL || type === PropertyValueType.ThreeD;
+    }
+    function collectEffectPoints(state, comp, layer) {
+        for (var l = 0; l < state.effectLayers.length; l++) { if (state.effectLayers[l] === layer) { return; } }
+        state.effectLayers.push(layer);
+        function visit(group, indexes, names) {
+            for (var i = 1; group && i <= group.numProperties; i++) {
+                var property = group.property(i), path = indexes.concat([i]), label = names + "/" + property.name;
+                if (typeof PropertyType !== "undefined" && property.propertyType !== PropertyType.PROPERTY) {
+                    if (property.numProperties > 0) { visit(property, path, label); }
+                    continue;
+                }
+                if (property.numProperties > 0) { visit(property, path, label); continue; }
+                if (!isEffectPoint(property)) { continue; }
+                if (property.expression || property.expressionEnabled || property.numKeys || property.dimensionsSeparated) {
+                    fail("Animated/expression effect coordinates require explicit review before resizing: " + label);
+                }
+                var value = vector(property.value, label), report = {comp: comp.name, layer: layer.name,
+                    property: property.name, match_name: property.matchName, index_path: path,
+                    property_value_type: String(property.propertyValueType), before: value.slice(0), after: null, restored: false};
+                state.effectPoints.push({property: property, layer: layer, value: value, label: label, report: report,
+                    propertyValueType: property.propertyValueType});
+                state.report.effect_points.push(report);
+            }
+        }
+        visit(layer.property("ADBE Effect Parade"), [], comp.name + "/" + layer.name + "/Effects");
+    }
+    function preserveEffectPoints(state) {
+        for (var i = 0; i < state.effectPoints.length; i++) {
+            var entry = state.effectPoints[i], property = entry.property;
+            if (property.expression || property.expressionEnabled || property.numKeys || property.propertyValueType !== entry.propertyValueType) {
+                fail("Effect coordinate metadata changed during resize: " + entry.label);
+            }
+            if (!equalEffectPoint(property.value, entry.value)) {
+                var locked = entry.layer.locked;
+                try {
+                    if (locked) { entry.layer.locked = false; }
+                    property.setValue(entry.value);
+                } finally { if (locked) { entry.layer.locked = true; } }
+                entry.report.restored = true; state.report.restored_effect_point_count++;
+            }
+            entry.report.after = vector(property.value, entry.label);
+            if (!equalEffectPoint(entry.report.after, entry.value)) { fail("Effect coordinate readback failed: " + entry.label); }
+        }
+    }
+    function size(item) {
+        var result = [item.width, item.height];
+        for (var i = 0; i < 2; i++) { if (!near(result[i], Math.floor(result[i])) || result[i] < 1 || result[i] > 30000) { fail("Unsupported canvas/source size: " + item.name); } }
+        if (!near(item.pixelAspect, 1)) { fail("Non-square pixels require explicit review: " + item.name); }
+        return result;
+    }
+    function prop(layer, name) {
+        var group = layer.property("ADBE Transform Group"), result = group ? group.property(name) : null;
+        if (!result) { fail("Missing transform property: " + layer.name + "/" + name); }
+        return result;
+    }
+    function member(comp, layer) { for (var i = 1; i <= comp.numLayers; i++) { if (comp.layer(i) === layer) { return true; } } return false; }
+    function uses(project, source) {
+        var result = [];
+        for (var i = 1; i <= project.numItems; i++) {
+            var comp = project.item(i);
+            if (!(comp instanceof CompItem)) { continue; }
+            for (var j = 1; j <= comp.numLayers; j++) { if (comp.layer(j).source === source) { result.push({comp: comp, layer: comp.layer(j)}); } }
+        }
+        return result;
+    }
+    function canonical(expression) { return String(expression || "").replace(/\s/g, "").replace(/'/g, '"').replace(/;+$/, ""); }
+    function centerExpression(expression) {
+        var text = canonical(expression);
+        return text === "[thisComp.width,thisComp.height]/2" || text === "[thisComp.width/2,thisComp.height/2]" ||
+            text === "[thisComp.width/2,thisComp.height/2,0]";
+    }
+    function require2D(layer, comp) {
+        if (layer.threeDLayer || (typeof CameraLayer !== "undefined" && layer instanceof CameraLayer) ||
+                (typeof LightLayer !== "undefined" && layer instanceof LightLayer)) { fail("3D layers require explicit canvas review: " + comp.name + "/" + layer.name); }
+        if (typeof AutoOrientType !== "undefined" && layer.autoOrient !== undefined && layer.autoOrient !== AutoOrientType.NO_AUTO_ORIENT) {
+            fail("Auto-oriented layers require explicit review: " + comp.name + "/" + layer.name);
+        }
+        var seen = [], parent = layer.parent;
+        while (parent) {
+            if (!member(comp, parent)) { fail("Parent is outside the working composition: " + layer.name); }
+            for (var i = 0; i < seen.length; i++) { if (seen[i] === parent) { fail("Cyclic parent chain: " + layer.name); } }
+            if (parent === layer) { fail("Cyclic parent chain: " + layer.name); }
+            seen.push(parent); parent = parent.parent;
+        }
+        var group = layer.property("ADBE Transform Group"), fields = ["ADBE Anchor Point", "ADBE Scale", "ADBE Rotate Z", "ADBE Opacity"];
+        for (var p = 0; p < fields.length; p++) {
+            var property = group ? group.property(fields[p]) : null;
+            if (property && (property.expression || property.expressionEnabled)) {
+                fail("Unsupported transform expression was preserved: " + comp.name + "/" + layer.name + "/" + fields[p]);
+            }
+        }
+    }
+    function easeValues(values) {
+        var result = [];
+        for (var i = 0; i < values.length; i++) { result.push({speed: values[i].speed, influence: values[i].influence}); }
+        return result;
+    }
+    function readKey(property, index) {
+        var key = {time: property.keyTime(index), value: vector(property.keyValue(index), "key"),
+            inType: property.keyInInterpolationType(index), outType: property.keyOutInterpolationType(index),
+            inEase: easeValues(property.keyInTemporalEase(index)), outEase: easeValues(property.keyOutTemporalEase(index)),
+            temporalAuto: property.keyTemporalAutoBezier(index), temporalContinuous: property.keyTemporalContinuous(index)};
+        if (property.isSpatial) {
+            key.inTangent = vector(property.keyInSpatialTangent(index), "in tangent"); key.outTangent = vector(property.keyOutSpatialTangent(index), "out tangent");
+            key.spatialAuto = property.keySpatialAutoBezier(index); key.spatialContinuous = property.keySpatialContinuous(index); key.roving = property.keyRoving(index);
+            if (key.roving) { fail("Roving Position keys require explicit review."); }
+        }
+        return key;
+    }
+    function addOperation(state, comp, layer, name, delta, allowCenter) {
+        if (!hasDelta(delta)) { return; }
+        var property = prop(layer, name), label = comp.name + "/" + layer.name + "/" + name;
+        if (property.dimensionsSeparated) { fail("Separated coordinates require explicit review: " + label); }
+        var operation = {comp: comp, layer: layer, property: property, name: name, label: label, delta: delta,
+            expression: property.expression || "", expressionEnabled: !!property.expressionEnabled, keys: [], automatic: false};
+        if (operation.expression.length || operation.expressionEnabled) {
+            if (!allowCenter || !operation.expressionEnabled || property.numKeys || !centerExpression(operation.expression)) {
+                fail("Unsupported coordinate expression was preserved: " + label);
+            }
+            operation.automatic = true;
+            operation.value = offset(property.valueAtTime(0, false), delta);
+            state.report.automatic_centers.push(label);
+        } else if (property.numKeys) {
+            for (var i = 1; i <= property.numKeys; i++) { var key = readKey(property, i); key.value = offset(key.value, delta); operation.keys.push(key); }
+        } else { operation.value = offset(property.value, delta); }
+        state.operations.push(operation);
+    }
+    function validateStageConsumers(project, stage, options) {
+        options = options || {};
+        var outputName = options.outputCompName || "02_camera", cameraName = options.cameraLayer || "camera";
+        var consumers = uses(project, stage);
+        for (var i = 0; i < consumers.length; i++) {
+            var entry = consumers[i], layer = entry.layer;
+            if (entry.comp.name !== outputName || layer.parent || layer.threeDLayer) { fail("Unsupported external Stage consumer: " + entry.comp.name + "/" + layer.name); }
+            var names = ["ADBE Anchor Point", "ADBE Position", "ADBE Scale", "ADBE Rotate Z"];
+            var reference = 'source.layer("' + cameraName + '")';
+            var expected = [reference + '.position', reference + '.anchor_point',
+                '[10000/' + reference + '.scale[0],10000/' + reference + '.scale[1]]', '-' + reference + '.rotation'];
+            for (var n = 0; n < names.length; n++) {
+                var property = prop(layer, names[n]), expression = canonical(property.expression);
+                if (n === 1) { expression = expression.replace(/\.anchorPoint$/, ".anchor_point"); }
+                if (!property.expressionEnabled || expression !== expected[n]) { fail("Unsupported inverse-camera expression: " + entry.comp.name + "/" + names[n]); }
+            }
+            var cameras = [];
+            for (var c = 1; c <= stage.numLayers; c++) { if (stage.layer(c).name === cameraName) { cameras.push(stage.layer(c)); } }
+            if (cameras.length !== 1 || cameras[0].parent) { fail("Inverse rig requires one unparented camera controller."); }
+        }
+    }
+    function prepare(project, stage, mapping, options) {
+        options = options || {};
+        var stageName = options.stageName || "01_Comp stage";
+        if (!project || !(stage instanceof CompItem) || stage.name !== stageName) { fail("Explicit " + stageName + " and project are required."); }
+        var stageRegistered = false;
+        for (var s = 1; s <= project.numItems; s++) { if (project.item(s) === stage) { stageRegistered = true; } }
+        if (!stageRegistered) { fail("Stage does not belong to the supplied project."); }
+        if (project.file && ((options.protectedTemplate && pathKey(project.file.fsName) === pathKey(options.protectedTemplate)) ||
+                (!options.protectedTemplate && /DEMO_SC0+(?:\.|$)/i.test(String(project.file.name || ""))))) {
+            fail("Never modify the configured master template.");
+        }
+        var state = {operations: [], canvases: [], effectPoints: [], effectLayers: [], report: {ok: true, status: "validated", stage: stage.name,
+            old_size: size(stage), target_size: null, stage_delta: [0, 0], sources: [], cell_comps: [], warnings: [], automatic_centers: [],
+            changed_comp_count: 0, translated_property_count: 0, preserved_output_dimensions: [],
+            effect_points: [], restored_effect_point_count: 0, effect_point_tolerance: {absolute_px: 0.0001, relative: 0.0000001}}};
+        var tracks = [], seenLayers = [], nodes = [], maximum = [0, 0], caption, i, j;
+        if (!mapping || typeof mapping !== "object") { fail("An explicit mapped-cell object is required."); }
+        for (caption in mapping) {
+            if (!own(mapping, caption) || !mapping[caption]) { continue; }
+            var outer = mapping[caption];
+            if (!member(stage, outer)) { fail("Mapped layer is outside Stage: " + caption); }
+            for (i = 0; i < seenLayers.length; i++) { if (seenLayers[i] === outer) { fail("Multiple captions map to one layer: " + caption); } }
+            seenLayers.push(outer);
+            var leaf = outer, chain = [];
+            while (leaf.source instanceof CompItem) {
+                var cell = leaf.source;
+                if (cell === stage || cell.numLayers !== 1) { fail("A mapped cell comp must contain exactly one source layer: " + caption); }
+                for (i = 0; i < nodes.length; i++) { if (nodes[i].comp === cell) { fail("Shared/cyclic mapped cell comp: " + cell.name); } }
+                var node = {comp: cell, via: leaf, old: size(cell)}; nodes.push(node); chain.push(node); leaf = cell.layer(1);
+            }
+            if (!(leaf.source instanceof FootageItem)) { fail("Mapped cell has no footage source: " + caption); }
+            var dimensions = size(leaf.source);
+            maximum[0] = Math.max(maximum[0], dimensions[0]); maximum[1] = Math.max(maximum[1], dimensions[1]);
+            tracks.push({caption: caption, layer: outer, leaf: leaf, chain: chain});
+            state.report.sources.push({caption: caption, source: leaf.source.name, width: dimensions[0], height: dimensions[1]});
+        }
+        if (!tracks.length) { state.report.status = "no_mapped_cells"; state.report.target_size = state.report.old_size.slice(0); return state; }
+        state.report.target_size = maximum;
+        for (i = 1; i < state.report.sources.length; i++) {
+            if (state.report.sources[i].width !== state.report.sources[0].width || state.report.sources[i].height !== state.report.sources[0].height) {
+                state.report.warnings.push({kind: "mixed_cell_canvas_sizes", message: "Mapped cell source sizes differ; all working canvases use the maximum width and height: " + maximum.join("x")}); break;
+            }
+        }
+        state.canvases.push({comp: stage, old: state.report.old_size, target: maximum, delta: [(maximum[0] - stage.width) / 2, (maximum[1] - stage.height) / 2], stage: true});
+        state.report.stage_delta = state.canvases[0].delta;
+        for (i = 0; i < nodes.length; i++) {
+            var nodeDelta = [(maximum[0] - nodes[i].old[0]) / 2, (maximum[1] - nodes[i].old[1]) / 2];
+            state.canvases.push({comp: nodes[i].comp, old: nodes[i].old, target: maximum, delta: nodeDelta, stage: false});
+            state.report.cell_comps.push({name: nodes[i].comp.name, old_size: nodes[i].old, target_size: maximum.slice(0), delta: nodeDelta});
+            if (hasDelta(nodeDelta)) {
+                var cellUses = uses(project, nodes[i].comp);
+                if (cellUses.length !== 1 || cellUses[0].layer !== nodes[i].via) { fail("Cell comp is shared outside this mapping: " + nodes[i].comp.name); }
+                addOperation(state, cellUses[0].comp, nodes[i].via, "ADBE Anchor Point", nodeDelta, false);
+            }
+        }
+        if (hasDelta(state.report.stage_delta)) { validateStageConsumers(project, stage, options); }
+        for (i = 0; i < state.canvases.length; i++) {
+            var canvas = state.canvases[i];
+            if (!hasDelta(canvas.delta)) { continue; }
+            state.report.changed_comp_count++;
+            for (j = 1; j <= canvas.comp.numLayers; j++) {
+                var layer = canvas.comp.layer(j); require2D(layer, canvas.comp);
+                // Parent-space children inherit the root translation; never translate twice.
+                if (!layer.parent) { addOperation(state, canvas.comp, layer, "ADBE Position", canvas.delta, true); }
+                else {
+                    var childPosition = prop(layer, "ADBE Position");
+                    if (childPosition.expression || childPosition.expressionEnabled) { fail("Parented coordinate expressions require explicit review: " + layer.name); }
+                }
+            }
+        }
+        for (i = 1; i <= project.numItems; i++) {
+            var item = project.item(i), affected = false;
+            if (!(item instanceof CompItem)) { continue; }
+            for (j = 0; j < state.canvases.length; j++) { if (state.canvases[j].comp === item) { affected = true; } }
+            if (!affected) { state.report.preserved_output_dimensions.push({name: item.name, width: item.width, height: item.height}); }
+        }
+        for (i = 0; i < state.operations.length; i++) { if (!state.operations[i].automatic) { state.report.translated_property_count++; } }
+        if (state.report.changed_comp_count) {
+            // AE may scale effect coordinates on resize, including disabled/parented layers.
+            // Include source-comp instances as well; their containing output canvas is not resized.
+            for (i = 0; i < state.canvases.length; i++) {
+                var affectedComp = state.canvases[i].comp;
+                for (j = 1; j <= affectedComp.numLayers; j++) { collectEffectPoints(state, affectedComp, affectedComp.layer(j)); }
+                if (hasDelta(state.canvases[i].delta)) {
+                    var instances = uses(project, affectedComp);
+                    for (j = 0; j < instances.length; j++) { collectEffectPoints(state, instances[j].comp, instances[j].layer); }
+                }
+            }
+        }
+        if (!state.report.changed_comp_count) { state.report.status = "unchanged"; }
+        return state;
+    }
+    function writeOperation(operation) {
+        if (operation.automatic) { return; }
+        var property = operation.property, locked = operation.layer.locked;
+        try {
+            if (locked) { operation.layer.locked = false; }
+            if (!operation.keys.length) { property.setValue(operation.value); return; }
+            // Translate values only. AE's ease setters can convert existing LINEAR keys to BEZIER.
+            // The strict readback below still checks every original key's metadata unchanged.
+            for (var i = 0; i < operation.keys.length; i++) { property.setValueAtKey(i + 1, operation.keys[i].value); }
+        } finally { if (locked) { operation.layer.locked = true; } }
+    }
+    function sameEase(a, b) {
+        if (a.length !== b.length) { return false; }
+        for (var i = 0; i < a.length; i++) { if (!near(a[i].speed, b[i].speed) || !near(a[i].influence, b[i].influence)) { return false; } }
+        return true;
+    }
+    function verifyOperation(operation) {
+        var property = operation.property;
+        if ((property.expression || "") !== operation.expression || !!property.expressionEnabled !== operation.expressionEnabled || property.numKeys !== operation.keys.length) {
+            fail("Coordinate readback changed expression/key count: " + operation.label);
+        }
+        if (!operation.keys.length) {
+            if (!equalVector(property.valueAtTime(0, false), operation.value)) { fail("Coordinate readback failed: " + operation.label); }
+            return;
+        }
+        for (var i = 0; i < operation.keys.length; i++) {
+            var expected = operation.keys[i], actual = readKey(property, i + 1);
+            if (!near(expected.time, actual.time) || !equalVector(expected.value, actual.value) || expected.inType !== actual.inType || expected.outType !== actual.outType ||
+                    !sameEase(expected.inEase, actual.inEase) || !sameEase(expected.outEase, actual.outEase) || expected.temporalAuto !== actual.temporalAuto || expected.temporalContinuous !== actual.temporalContinuous ||
+                    (property.isSpatial && (!equalVector(expected.inTangent, actual.inTangent) || !equalVector(expected.outTangent, actual.outTangent) || expected.spatialAuto !== actual.spatialAuto || expected.spatialContinuous !== actual.spatialContinuous))) {
+                fail("Animation readback failed: " + operation.label);
+            }
+        }
+    }
+    function inspect(project, stage, mapping, options) { return prepare(project, stage, mapping, options).report; }
+    function apply(project, stage, mapping, options) {
+        var state = prepare(project, stage, mapping, options), i;
+        if (!state.report.changed_comp_count) { return state.report; }
+        for (i = 0; i < state.canvases.length; i++) {
+            var canvas = state.canvases[i];
+            if (hasDelta(canvas.delta)) { canvas.comp.width = canvas.target[0]; canvas.comp.height = canvas.target[1]; }
+        }
+        for (i = 0; i < state.operations.length; i++) { writeOperation(state.operations[i]); }
+        preserveEffectPoints(state);
+        for (i = 0; i < state.canvases.length; i++) {
+            if (!equalVector(size(state.canvases[i].comp), state.canvases[i].target)) { fail("Canvas size readback failed: " + state.canvases[i].comp.name); }
+        }
+        for (i = 0; i < state.operations.length; i++) { verifyOperation(state.operations[i]); }
+        state.report.status = "applied";
+        return state.report;
+    }
+    return {inspect: inspect, apply: apply};
+}());

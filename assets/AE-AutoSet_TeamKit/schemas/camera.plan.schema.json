@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Codex-reviewed camera layout plan",
+  "type": "object",
+  "required": ["version", "cut_number", "fps", "total_frames", "stage_name", "camera_layer", "layout_source", "image_size", "keys"],
+  "properties": {
+    "version": {"const": 1},
+    "cut_number": {"type": "string", "pattern": "^[0-9]+$"},
+    "fps": {"type": "number", "exclusiveMinimum": 0},
+    "total_frames": {"type": "integer", "minimum": 1, "description": "Independently reviewed full scene duration, matching ARDJ and Stage; not the last camera key. A 132-frame scene may have its last movement key at frame 120."},
+    "stage_name": {"const": "01_Comp stage", "description": "Working composition in the v1.13 master; output rig is 02_camera."},
+    "camera_layer": {"type": "string", "minLength": 1},
+    "layout_source": {"type": "string", "pattern": "^[Ll][Oo][/\\\\]", "description": "Path relative to the current project scene folder; must remain inside its LO directory."},
+    "image_size": {"type": "array", "items": {"type": "integer", "minimum": 1}, "minItems": 2, "maxItems": 2},
+    "replace_existing": {"type": "boolean", "default": false, "description": "Set true only with explicit authorization to replace different existing camera keys."},
+    "keys": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["frame", "label", "rect", "slow"],
+        "properties": {
+          "frame": {"type": "integer", "minimum": 1, "description": "1-based cumulative scene frame, not a zero-based AE time index."},
+          "label": {"type": "string", "minLength": 1},
+          "rect": {"type": "array", "items": {"type": "number", "minimum": 0}, "minItems": 4, "maxItems": 4, "description": "Original LO pixel line centers: [left, top, right, bottom]."},
+          "slow": {"type": "boolean", "description": "True only at an ending key whose movement explicitly says Slow on the sheet; first key must be false."}
+        }
+      }
+    },
+    "evidence": {"type": "object", "description": "Current sheet/LO source paths, image hashes, notes and visual review evidence; do not reuse another scene's values."}
+  }
+}

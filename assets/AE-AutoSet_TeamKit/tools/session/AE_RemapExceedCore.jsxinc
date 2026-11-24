@@ -1,0 +1,208 @@
+/*
+ * AE Timesheet Auto compatible application core.
+ * ARDJ field/index rules were verified against AE_RemapExceed 1.0.0.0.
+ * No original binary or copyrighted source code is modified or embedded.
+ */
+var AETimesheetCore = (function () {
+    function fail(message) { throw new Error(message); }
+    function frameTime(frameIndex, comp) { return frameIndex * comp.frameDuration; }
+    function sourceFrameRate(layer, fallback) {
+        try { if (layer.source && layer.source.frameRate > 0) { return layer.source.frameRate; } } catch (ignored) {}
+        return fallback;
+    }
+    function clearKeys(property) {
+        for (var i = property.numKeys; i >= 1; i--) { property.removeKey(i); }
+    }
+    function normalizeName(value) {
+        return String(value).toUpperCase().replace(/セル|셀/g, "CELL").replace(/[\s_\-]/g, "").replace(/^CELL/, "").replace(/CELL$/, "");
+    }
+    function validate(data, comp) {
+        if (!comp || !(comp instanceof CompItem)) { fail("활성 컴포지션이 없습니다."); }
+        if (!data || data.schema_version !== "1.0") { fail("타임시트 판독 데이터가 올바르지 않습니다."); }
+        if (!data.cut_number || data.cut_confidence < 0.95) { fail("CUT 번호를 확정할 수 없습니다."); }
+        if (data.uncertain_items && data.uncertain_items.length) { fail("인식 결과에 미확정 항목이 있어 자동 적용을 중단했습니다."); }
+        if (Math.abs(comp.frameRate - data.sheet_fps) > 0.001) { fail("타임시트 FPS와 컴포지션 FPS가 다릅니다."); }
+        var total = data.duration.total_frames;
+        for (var t = 0; t < data.tracks.length; t++) {
+            var previous = 0;
+            var events = data.tracks[t].events;
+            for (var e = 0; e < events.length; e++) {
+                var event = events[e];
+                if (event.sheet_frame <= previous || event.sheet_frame < 1 || event.sheet_frame > total) { fail(data.tracks[t].caption + " 트랙의 이벤트 프레임이 유효하지 않습니다."); }
+                if (event.type === "cell" && (!event.cell_number || event.cell_number < 1)) { fail("셀 번호는 양의 정수여야 합니다."); }
+                previous = event.sheet_frame;
+            }
+        }
+        return true;
+    }
+    function eligible(layer) {
+        if (!layer || !layer.canSetTimeRemapEnabled) { return false; }
+        if (layer.nullLayer || layer.adjustmentLayer || layer instanceof CameraLayer || layer instanceof LightLayer) { return false; }
+        return !!layer.source;
+    }
+    function eligibleLayers(comp) {
+        var result = [];
+        for (var i = 1; i <= comp.numLayers; i++) { if (eligible(comp.layer(i))) { result.push(comp.layer(i)); } }
+        return result;
+    }
+    function findComp(name) {
+        for (var i = 1; i <= app.project.numItems; i++) {
+            var item = app.project.item(i);
+            if (item instanceof CompItem && item.name === name) { return item; }
+        }
+        return null;
+    }
+    function resolveLeafLayer(layer, caption) {
+        if (!(layer.source instanceof CompItem)) { return layer; }
+        var sourceComp = layer.source;
+        var candidates = eligibleLayers(sourceComp);
+        var exact = [];
+        for (var i = 0; i < candidates.length; i++) {
+            if (normalizeName(candidates[i].name) === normalizeName(caption) || normalizeName(sourceComp.name) === normalizeName(caption)) { exact.push(candidates[i]); }
+        }
+        if (exact.length === 1) { return exact[0]; }
+        if (candidates.length === 1) { return candidates[0]; }
+        return layer;
+    }
+    function sourceFrameIndex(number, frameMap) {
+        if (!frameMap) { return number - 1; }
+        var index = frameMap[String(number)];
+        if (typeof index !== "number" || !isFinite(index) || index < 0 || index !== Math.floor(index)) {
+            fail("셀 번호 " + number + "의 소스 연결이 없습니다.");
+        }
+        return index;
+    }
+    function validateSourceRange(layer, events, fps, frameMap) {
+        var rate = sourceFrameRate(layer, fps);
+        var available = Math.floor(layer.source.duration * rate + 0.001);
+        for (var i = 0; i < events.length; i++) {
+            if (events[i].type === "cell" && sourceFrameIndex(events[i].cell_number, frameMap) >= available) {
+                fail("셀 번호 " + events[i].cell_number + "이(가) 소스 프레임 범위를 초과합니다: " + layer.name);
+            }
+        }
+    }
+    function applyTrack(comp, layer, track, data, options) {
+        options = options || {};
+        layer = options.resolveNested === false ? layer : resolveLeafLayer(layer, track.caption);
+        if (!eligible(layer)) { fail(track.caption + " 트랙 대상 레이어에서 Time Remap을 사용할 수 없습니다."); }
+        validateSourceRange(layer, track.events, data.sheet_fps, options.sourceFrameByNumber);
+        var rate = sourceFrameRate(layer, data.sheet_fps);
+        if (layer.timeRemapEnabled) { layer.timeRemapEnabled = false; }
+        layer.timeRemapEnabled = true;
+        var remap = layer.property("ADBE Time Remapping");
+        var hasEmpty = false;
+        for (var i = 0; i < track.events.length; i++) { if (track.events[i].type === "empty") { hasEmpty = true; } }
+        var opacity = layer.property("ADBE Transform Group").property("ADBE Opacity");
+        if (hasEmpty) { clearKeys(opacity); }
+        for (i = 0; i < track.events.length; i++) {
+            var event = track.events[i];
+            var time = frameTime(event.sheet_frame - 1, comp);
+            if (event.type === "cell") {
+                remap.setValueAtTime(time, sourceFrameIndex(event.cell_number, options.sourceFrameByNumber) / rate);
+            } else {
+                remap.setValueAtTime(time, 0);
+            }
+            if (hasEmpty) {
+                opacity.setValueAtTime(time, event.type === "empty" ? 0 : 100);
+                var opacityKey = opacity.nearestKeyIndex(time);
+                opacity.setInterpolationTypeAtKey(opacityKey, KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
+            }
+        }
+        var eventTimes = [];
+        for (i = 0; i < track.events.length; i++) { eventTimes.push(frameTime(track.events[i].sheet_frame - 1, comp)); }
+        for (i = remap.numKeys; i >= 1; i--) {
+            var keep = false;
+            for (var j = 0; j < eventTimes.length; j++) { if (Math.abs(remap.keyTime(i) - eventTimes[j]) < comp.frameDuration / 10) { keep = true; break; } }
+            if (!keep) { remap.removeKey(i); }
+        }
+        for (i = 1; i <= remap.numKeys; i++) { remap.setInterpolationTypeAtKey(i, KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD); }
+        var duration = data.duration.total_frames / data.sheet_fps;
+        layer.inPoint = 0;
+        layer.outPoint = duration;
+        return layer;
+    }
+    function storeData(data, ardj) {
+        var dataComp = findComp("ae_remap_data");
+        if (!dataComp) { dataComp = app.project.items.addComp("ae_remap_data", 16, 16, 1, 1, data.sheet_fps); }
+        var layerName = "CUT_" + data.cut_number + "_SHEET_" + data.sheet_number;
+        for (var i = dataComp.numLayers; i >= 1; i--) { if (dataComp.layer(i).name === layerName) { dataComp.layer(i).remove(); } }
+        var payload = JSON.stringify({timesheet: data, ardj: ardj});
+        var textLayer = dataComp.layers.addText(payload);
+        textLayer.name = layerName;
+        textLayer.enabled = false;
+        textLayer.shy = true;
+        textLayer.comment = "AE Timesheet Auto 1.0 / ardjV2";
+        dataComp.hideShyLayers = true;
+        return textLayer;
+    }
+    function fitDuration(comp, data) {
+        var duration = data.duration.total_frames / data.sheet_fps;
+        comp.duration = duration;
+        for (var i = 1; i <= comp.numLayers; i++) { if (comp.layer(i).outPoint > duration) { comp.layer(i).outPoint = duration; } }
+    }
+    function fitLayerSpan(layer, data) {
+        var duration = data.duration.total_frames / data.sheet_fps;
+        layer.inPoint = 0;
+        layer.outPoint = duration;
+    }
+    function fitMappedCellDurations(stageComp, data, mapping) {
+        var fitted = [], seen = [];
+        for (var t = 0; t < data.tracks.length; t++) {
+            var caption = data.tracks[t].caption;
+            var wrapper = mapping[caption];
+            if (!data.tracks[t].events.length || !wrapper || !(wrapper.source instanceof CompItem)) { continue; }
+            var duplicate = false;
+            for (var s = 0; s < seen.length; s++) { if (seen[s] === wrapper.source) { duplicate = true; break; } }
+            if (!duplicate) {
+                fitDuration(wrapper.source, data);
+                seen.push(wrapper.source);
+                fitted.push(wrapper.source.name);
+            }
+            fitLayerSpan(wrapper, data);
+        }
+        return fitted;
+    }
+    function fitProjectDurations(stageComp, mainComp, data, mapping) {
+        if (!mainComp || !(mainComp instanceof CompItem)) { fail("최상위 씬 컴포지션을 찾을 수 없습니다."); }
+        var fittedCells = fitMappedCellDurations(stageComp, data, mapping);
+        fitDuration(stageComp, data);
+        fitDuration(mainComp, data);
+        for (var i = 1; i <= mainComp.numLayers; i++) {
+            if (mainComp.layer(i).source === stageComp) { fitLayerSpan(mainComp.layer(i), data); }
+        }
+        return {
+            frames: data.duration.total_frames,
+            cellComps: fittedCells,
+            stageComp: stageComp.name,
+            mainComp: mainComp.name
+        };
+    }
+    function autoMap(tracks, layers) {
+        var mapping = {};
+        if (tracks.length === 1 && layers.length === 1) { mapping[tracks[0].caption] = layers[0]; return mapping; }
+        for (var t = 0; t < tracks.length; t++) {
+            var candidates = [];
+            for (var i = 0; i < layers.length; i++) { if (normalizeName(layers[i].name) === normalizeName(tracks[t].caption)) { candidates.push(layers[i]); } }
+            if (candidates.length === 1) { mapping[tracks[t].caption] = candidates[0]; }
+        }
+        return mapping;
+    }
+    function apply(data, ardj, comp, mapping, options) {
+        options = options || {};
+        validate(data, comp);
+        var applied = [];
+        for (var t = 0; t < data.tracks.length; t++) {
+            var track = data.tracks[t];
+            if (!track.events.length) { continue; }
+            var layer = mapping[track.caption];
+            if (!layer) { fail(track.caption + " 트랙에 대응하는 레이어가 없습니다."); }
+            applied.push(applyTrack(comp, layer, track, data, options).name);
+        }
+        if (options.fitDuration !== false) { fitDuration(comp, data); }
+        if (options.storeData !== false) { storeData(data, ardj); }
+        return applied;
+    }
+    return {validate: validate, eligibleLayers: eligibleLayers, findComp: findComp, resolveLeafLayer: resolveLeafLayer, applyTrack: applyTrack, storeData: storeData,
+            fitDuration: fitDuration, fitLayerSpan: fitLayerSpan, fitMappedCellDurations: fitMappedCellDurations, fitProjectDurations: fitProjectDurations,
+            autoMap: autoMap, apply: apply, normalizeName: normalizeName, frameTime: frameTime};
+}());

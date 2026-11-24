@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+_sessions/
+*.aep
+# Works you register stay on your PC; only the DEMO work is part of the repository.
+assets/AE-AutoSet_TeamKit/projects/*
+!assets/AE-AutoSet_TeamKit/projects/DEMO/
+!assets/AE-AutoSet_TeamKit/projects/DEMO/DEMO_SC000.tk1.aep
