@@ -1872,7 +1872,9 @@ function Save-Preview($Element, [string]$File, [int]$Width, [int]$Height) {
     $Element.Measure((New-Object Windows.Size($Width, $Height)))
     $Element.Arrange((New-Object Windows.Rect(0, 0, $Width, $Height)))
     $Element.UpdateLayout()
-    $bitmap = New-Object Windows.Media.Imaging.RenderTargetBitmap($Width, $Height, 96, 96, [Windows.Media.PixelFormats]::Pbgra32)
+    # AE_AUTOSET_PREVIEW_SCALE=2 renders sharp images for the README.
+    $scale = if ($env:AE_AUTOSET_PREVIEW_SCALE) { [double]$env:AE_AUTOSET_PREVIEW_SCALE } else { 1 }
+    $bitmap = New-Object Windows.Media.Imaging.RenderTargetBitmap([int]($Width * $scale), [int]($Height * $scale), (96 * $scale), (96 * $scale), [Windows.Media.PixelFormats]::Pbgra32)
     $bitmap.Render($Element)
     $encoder = New-Object Windows.Media.Imaging.PngBitmapEncoder
     $encoder.Frames.Add([Windows.Media.Imaging.BitmapFrame]::Create($bitmap))
@@ -1959,7 +1961,9 @@ if ($SelfTest) {
     }
     if ($PreviewDirectory) {
         New-Item -ItemType Directory -Path $PreviewDirectory -Force | Out-Null
-        if ($request) { $ui.CopyRequest.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Button]::ClickEvent))) }
+        # AE_AUTOSET_PREVIEW_LANG renders the screenshots in that language, without the copy banner.
+        if ($env:AE_AUTOSET_PREVIEW_LANG) { $ui.UiLanguage.SelectedItem = @($ui.UiLanguage.Items | Where-Object { $_.Tag -eq $env:AE_AUTOSET_PREVIEW_LANG })[0] }
+        elseif ($request) { $ui.CopyRequest.RaiseEvent((New-Object Windows.RoutedEventArgs([Windows.Controls.Button]::ClickEvent))) }
         Save-Preview $ui.Root (Join-Path $PreviewDirectory 'main.png') 1060 780
     }
     if ($env:AE_AUTOSET_TEST_EDIT -and $PreviewDirectory) {
