@@ -641,6 +641,19 @@ $mainXaml = @'
       <Border Grid.Row="2" Background="#161618" CornerRadius="12" BorderBrush="{StaticResource Line}" BorderThickness="1" Margin="0,14,0,0">
         <Grid>
           <ListView x:Name="CutList" BorderThickness="0" Background="Transparent" Foreground="#FAFAFA" Margin="4" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+            <!-- Own template: the default one paints a light system background while the list is disabled during a run. -->
+            <ListView.Template>
+              <ControlTemplate TargetType="ListView">
+                <Border x:Name="ListBorder" Background="{TemplateBinding Background}">
+                  <ScrollViewer Style="{DynamicResource {x:Static GridView.GridViewScrollViewerStyleKey}}" Focusable="False">
+                    <ItemsPresenter/>
+                  </ScrollViewer>
+                </Border>
+                <ControlTemplate.Triggers>
+                  <Trigger Property="IsEnabled" Value="False"><Setter TargetName="ListBorder" Property="Opacity" Value="0.6"/></Trigger>
+                </ControlTemplate.Triggers>
+              </ControlTemplate>
+            </ListView.Template>
             <ListView.ItemContainerStyle>
               <Style TargetType="ListViewItem">
                 <Setter Property="HorizontalContentAlignment" Value="Stretch"/><Setter Property="Padding" Value="2,6"/>
@@ -1951,9 +1964,26 @@ if ($SelfTest) {
     Write-Output ('[request] ' + $request)
     if ($env:AE_AUTOSET_TEST_RUN -and $request) {
         if ($env:AE_AUTOSET_TEST_RUN -eq 'claude') { $ui.TargetClaude.IsChecked = $true } else { $ui.TargetCodex.IsChecked = $true }
+        # AE_AUTOSET_TEST_RUN_FRAMES=<seconds> waits for the whole run and saves the window every <seconds>
+        # (run_000.png ..., then run_done.png after the rescan): the README demo of a real run.
+        $every = [double]$env:AE_AUTOSET_TEST_RUN_FRAMES
+        if ($every -and $env:AE_AUTOSET_PREVIEW_LANG) { $ui.UiLanguage.SelectedItem = @($ui.UiLanguage.Items | Where-Object { $_.Tag -eq $env:AE_AUTOSET_PREVIEW_LANG })[0] }
+        if ($every -and $PreviewDirectory) { New-Item -ItemType Directory -Path $PreviewDirectory -Force | Out-Null; Save-Preview $ui.Root (Join-Path $PreviewDirectory 'run_ready.png') 1060 860 }
         Start-AiRun
-        $deadline = (Get-Date).AddSeconds(60)
-        while ($script:AiRun.running -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 200; Receive-AiOutput }
+        $deadline = (Get-Date).AddSeconds($(if ($every) { 3600 } else { 60 }))
+        $next = Get-Date; $shot = 0
+        while ($script:AiRun.running -and (Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 200; Receive-AiOutput
+            if ($every -and $PreviewDirectory -and (Get-Date) -ge $next) {
+                Save-Preview $ui.Root (Join-Path $PreviewDirectory ('run_{0:000}.png' -f $shot)) 1060 860
+                $shot++; $next = (Get-Date).AddSeconds($every)
+            }
+        }
+        if ($every -and $PreviewDirectory -and $script:ScanRoot) {
+            $keep = $ui.RunLog.Text; Scan-Folder $script:ScanRoot
+            $ui.RunLog.Text = $keep; $ui.RunLog.ScrollToEnd(); $ui.RunPanel.Visibility = 'Visible'
+            Save-Preview $ui.Root (Join-Path $PreviewDirectory 'run_done.png') 1060 860
+        }
         Write-Output ('[run title] ' + $ui.RunTitle.Text + ' | ' + $ui.RunTime.Text)
         Write-Output ('[run log] ' + ($ui.RunLog.Text -replace "`r`n", ' | '))
         Write-Output ('[run args] ' + $script:LastCommand.arguments)

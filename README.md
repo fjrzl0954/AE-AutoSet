@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="media/icon.png" width="96" alt="AE AutoSet icon">
+<img src="docs/media/icon.png" width="96" alt="AE AutoSet icon">
 
 # AE AutoSet
 
@@ -18,9 +18,9 @@ cel timing, layout and camera, and saves a new AEP for every cut.
 ![After Effects 2025+](https://img.shields.io/badge/After%20Effects-2025%2B-9999FF)
 ![Codex | Claude Code](https://img.shields.io/badge/AI-Codex%20%7C%20Claude%20Code-F09E0F)
 
-**English** · [한국어](README.ko.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
+**English** · [한국어](docs/README.ko.md) · [日本語](docs/README.ja.md) · [简体中文](docs/README.zh-CN.md)
 
-<img src="media/window.png" width="820" alt="AE AutoSet window with three DEMO cuts ready">
+<img src="docs/media/window.png" width="820" alt="AE AutoSet window with three DEMO cuts ready">
 
 </div>
 
@@ -39,8 +39,9 @@ cel timing, layout and camera, and saves a new AEP for every cut.
   bottom left), and worker notes are written in the same language.
 
 <div align="center">
-<img src="media/result.gif" width="600" alt="DEMO cut after a run: cel A changes at frame 13 and the camera pushes in"><br>
-<sub>The DEMO cut after a run: cel A changes on the frame the sheet says, and the camera pushes in.</sub>
+<img src="docs/media/result.gif" width="760" alt="A real run of the sample cut, then the timesheet next to the After Effects result frame by frame"><br>
+<sub>A real run of the sample cut, then the sheet next to the result: A blinks (frames 25–31), B waves (37–60),<br>
+and the camera trucks in from frame A to frame B (T.U., 13–48), all as written on the sheet.</sub>
 </div>
 
 ## Requirements
@@ -65,10 +66,11 @@ The full guide (English, Korean, Japanese, Simplified Chinese) is in [`READ ME.t
 
 ## Use
 
-**Try the DEMO work first.** A neutral `DEMO` work is included (`assets/AE-AutoSet_TeamKit/projects/DEMO`):
-a master AEP built from scratch (stage, `02_camera` output, a 2D `camera` rig framed by F's Frame) with no
-footage. Name a cut folder `DEMO_SC001` with `sheet/`, `LO/` and cel folders such as `A/A0001.png`, then run it.
-`make_demo_template.jsx` in the same folder rebuilds the master.
+**Try the sample cut first.** The included `DEMO` work comes with one ready-to-run cut,
+`assets/AE-AutoSet_TeamKit/projects/DEMO/DEMO_SC001` (a timesheet, LO and cels drawn for this repository).
+Copy that folder anywhere (a new folder on the Desktop is fine), select *Demo* on the left, drop the folder in and press *Start*.
+The DEMO master AEP (stage, `02_camera` output, a 2D `camera` rig framed by F's Frame) has no footage;
+`make_demo_template.jsx` in the same folder rebuilds it.
 
 1. **Register your work** (once per work): *+ New work* → choose the master AEP (the empty cut-000
    template) and, if you can, one real cut folder. Confirm the suggested comps and naming.
@@ -77,7 +79,7 @@ footage. Name a cut folder `DEMO_SC001` with `sheet/`, `LO/` and cel folders suc
    To redo cuts that already have results, turn on *Include redo* below the cut list.
 
 <div align="center">
-<img src="media/register.png" width="460" alt="Add new work: the comps read from the master AEP"><br>
+<img src="docs/media/register.png" width="460" alt="Add new work: the comps read from the master AEP"><br>
 <sub>Adding a work: the comps, cel position and camera are read from the master AEP.</sub>
 </div>
 
