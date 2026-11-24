@@ -67,6 +67,12 @@ footage. Name a cut folder `DEMO_SC001` with `sheet/`, `LO/` and cel folders suc
   *Crash Repair Options* dialog with *Continue* automatically.
 - Your registered works, master AEPs and settings stay on your PC.
 
+## Feedback
+
+Bugs, questions and ideas go to [Issues](https://github.com/fjrzl0954/AE-AutoSet/issues/new/choose):
+pick *Bug report* or *Feature request*. Paste the text of the note files and any error the window showed.
+**The page is public: don't attach timesheets, cels, LO or AEPs from real works.** Use the DEMO work instead.
+
 ## License
 
 [MIT](LICENSE). Third-party notices: `assets/AE-AutoSet_TeamKit/licenses/THIRD_PARTY_LICENSES.md`.
@@ -110,5 +116,10 @@ LO, 카메라를 적용해 컷마다 AEP로 저장해요.
 - AI 사용량은 본인 요금제에서 나가요. 한 번에 여러 컷을 넣을수록 컷당 사용량이 줄어요.
 - 작업한 컷의 시트·LO 이미지는 본인 계정으로 고른 AI 서비스(Codex 또는 Claude)에 전송돼요.
 - 등록한 작품, 양식 AEP, 설정은 각자 PC에만 저장돼요.
+
+### 피드백
+오류, 질문, 아이디어는 [Issues](https://github.com/fjrzl0954/AE-AutoSet/issues/new/choose)에 남겨 주세요.
+"오류 신고" 또는 "기능 요청"을 고르고, 메모 파일 내용과 창에 나온 오류를 붙여 넣어 주세요.
+**공개 페이지라서 실제 작품의 시트·셀·LO·AEP는 올리지 마세요.** 그림이 필요하면 DEMO 작품을 써 주세요.
 
 라이선스: [MIT](LICENSE)
